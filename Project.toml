@@ -1,0 +1,19 @@
+name = "FesmUtils"
+uuid = "87fa8290-809d-4b2a-a2bb-fb70d9529671"
+version = "0.1.0"
+authors = ["Alexander Robinson"]
+
+[deps]
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+Proj = "c94c279d-25a6-4763-9509-64d165bea63e"
+
+[compat]
+NCDatasets = "0.14"
+Proj = "1.9"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
