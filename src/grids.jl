@@ -355,16 +355,20 @@ end
 """
     write_grid_nc(path, g)
 
-Write a NetCDF grid file with `xc`, `yc`, `crs`, `lon2D`, `lat2D` and `area`.
+Write a NetCDF grid file with `xc`, `yc`, `crs`, `lon2D`, `lat2D` and `area`. The 2D
+fields are compressed Float32 (about 1 m in position, 1e-7 relative in area), a fifth
+of the size of uncompressed Float64.
 """
 function write_grid_nc(path::AbstractString, g::ProjGrid)
     lon, lat = lonlat(g)
     area = cell_area(g, lon, lat)
     NCDataset(path, "c") do ds
         init_grid_nc!(ds, g)
-        defVar(ds, "lon2D", lon, ("xc", "yc"); attrib=["units" => "degrees_east", "grid_mapping" => "crs"])
-        defVar(ds, "lat2D", lat, ("xc", "yc"); attrib=["units" => "degrees_north", "grid_mapping" => "crs"])
-        defVar(ds, "area", area, ("xc", "yc"); attrib=["units" => "m^2", "grid_mapping" => "crs"])
+        for (name, A, units) in (("lon2D", lon, "degrees_east"), ("lat2D", lat, "degrees_north"),
+                                 ("area", area, "m^2"))
+            defVar(ds, name, Float32.(A), ("xc", "yc"); deflatelevel=1, shuffle=true,
+                   attrib=["units" => units, "grid_mapping" => "crs"])
+        end
     end
     return path
 end

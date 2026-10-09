@@ -1,5 +1,6 @@
 using FesmUtils
 using Test
+using NCDatasets
 
 include("test_grids.jl")
 include("test_remap_aligned.jl")

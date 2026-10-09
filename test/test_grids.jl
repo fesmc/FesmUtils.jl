@@ -42,4 +42,9 @@ const PS_NORTH = polar_stereographic_proj(lat_0=90, lat_ts=70, lon_0=-45, a=6378
     ncpath = tempname() * ".nc"
     write_grid_nc(ncpath, g)
     @test isfile(ncpath)
+    NCDataset(ncpath) do ds
+        @test eltype(ds["area"].var) == Float32
+        @test maximum(abs.(ds["area"][:, :] .- area) ./ area) < 1e-6
+        @test maximum(abs.(ds["lat2D"][:, :] .- lat)) < 1e-4
+    end
 end
