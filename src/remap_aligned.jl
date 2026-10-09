@@ -187,3 +187,50 @@ function remap_fractions(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix, classe
     end
     return fracs, fv
 end
+
+"""
+    remap_dominant(tgt::ProjGrid, src::ProjGrid, M) -> Mt
+    remap_dominant(m::AlignedMap, M) -> Mt
+
+Class of the categorical field `M` (integers, size of `src`) covering the largest
+area of each target cell, on the same projection (exact overlaps). Ties go to the
+smaller class; target cells without source cells get 0. Threaded over rows.
+"""
+remap_dominant(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix{<:Integer}) =
+    remap_dominant(AlignedMap(tgt, src), M)
+
+function remap_dominant(m::AlignedMap, M::AbstractMatrix{T}) where {T<:Integer}
+    size(M) == size(m.src) ||
+        throw(DimensionMismatch("field size $(size(M)) does not match grid $(m.src.name) $(size(m.src))"))
+    nxt, nyt = size(m.tgt)
+    wx, wy = m.wx, m.wy
+    Mt = zeros(T, nxt, nyt)
+    Threads.@threads for j in 1:nyt
+        cls = T[]
+        area = Float64[]
+        @inbounds for i in 1:nxt
+            empty!(cls)
+            empty!(area)
+            for (q, k) in enumerate(wy.ranges[j]), (p, l) in enumerate(wx.ranges[i])
+                w = wx.weights[i][p] * wy.weights[j][q]
+                c = M[l, k]
+                n = findfirst(==(c), cls)
+                if n === nothing
+                    push!(cls, c)
+                    push!(area, w)
+                else
+                    area[n] += w
+                end
+            end
+            isempty(cls) && continue
+            best = 1
+            for n in 2:length(cls)
+                if area[n] > area[best] + 1e-12 || (abs(area[n] - area[best]) <= 1e-12 && cls[n] < cls[best])
+                    best = n
+                end
+            end
+            Mt[i, j] = cls[best]
+        end
+    end
+    return Mt
+end

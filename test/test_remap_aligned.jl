@@ -42,3 +42,21 @@
     fr, fv = remap_fractions(c, fine, M, 1:3)
     @test all(fr[1] .+ fr[2] .+ fr[3] .≈ 1)
 end
+
+@testset "remap_dominant" begin
+    proj = "+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +units=km"
+    src = ProjGrid("s", (0.0, 11.0), (0.0, 7.0), 1.0, proj)
+    M = [i <= 5 ? 1 : (j <= 3 ? 2 : 3) for i in 1:12, j in 1:8]
+    # Factor 1: unchanged
+    @test remap_dominant(src, src, M) == M
+    # Odd factor: coarse cells are 3x3 blocks centred on fine cells
+    tgt = coarsen(src, 3; name="t")
+    Mt = remap_dominant(tgt, src, M)
+    for i in axes(Mt, 1), j in axes(Mt, 2)
+        ic, jc = 3(i - 1) + 1, 3(j - 1) + 1
+        blk = [M[k, l] for k in max(1, ic - 1):min(12, ic + 1), l in max(1, jc - 1):min(8, jc + 1)]
+        cnt = Dict(c => count(==(c), blk) for c in unique(blk))
+        best = maximum(values(cnt))
+        @test Mt[i, j] == minimum(c for (c, n) in cnt if n == best)
+    end
+end
