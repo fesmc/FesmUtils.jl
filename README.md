@@ -1,6 +1,19 @@
 # FesmUtils.jl
 
-What do we want to house here?
+Utilities shared across FESM components and data processing.
+
+## Grids and remapping (implemented)
+
+- `ProjGrid`: regular grid on a map projection (km), read from/written to cdo grid description files (`ProjGrid("grid_GRL-8KM.txt")`, `write_griddes`, `write_grid_nc`). `coarsen` and `crop` derive nested grids.
+- `LonLatGrid`: regular lon-lat grid (e.g. GEBCO).
+- `remap(tgt, src, F) -> (Ft, f_valid)`:
+  - `src::ProjGrid` on the same projection: exact conservative remapping (separable 1D overlaps). Use `AlignedMap(tgt, src)` to reuse weights.
+  - `src::LonLatGrid`: area-weighted mean from `nsub` x `nsub` samples per target cell (`nsub` keyword).
+- `remap_fractions(tgt, src, M, classes)`: area fraction of each class of a categorical field.
+
+All of these are threaded: start Julia with `-t N` (or `JULIA_NUM_THREADS`).
+
+## Planned
 
 ## FesmPreprocessing.jl
 
