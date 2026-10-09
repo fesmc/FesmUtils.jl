@@ -10,5 +10,6 @@ export AlignedMap, same_projection, remap, remap_fractions
 
 include("grids.jl")
 include("remap_aligned.jl")
+include("remap_lonlat.jl")
 
 end # module
