@@ -8,8 +8,9 @@ Utilities shared across FESM components and data processing.
 - `LonLatGrid`: regular lon-lat grid (e.g. GEBCO).
 - `remap(tgt, src, F) -> (Ft, f_valid)`:
   - `src::ProjGrid` on the same projection: exact conservative remapping (separable 1D overlaps). Use `AlignedMap(tgt, src)` to reuse weights.
-  - `src::LonLatGrid`: area-weighted mean from `nsub` x `nsub` samples per target cell (`nsub` keyword).
-- `remap_fractions(tgt, src, M, classes)`: area fraction of each class of a categorical field.
+  - `src::LonLatGrid`, or `src::ProjGrid` on any projection with the `nsub` keyword: area-weighted mean from `nsub` x `nsub` samples per target cell.
+- `remap_fractions(tgt, src, M, classes)`: area fraction of each class of a categorical field (same methods).
+- `xy_bounds(g, proj)`: extent of a grid in another projection (e.g. to crop the target to a source tile).
 - `distance_to(mask, dx, dy)`: exact Euclidean distance to the nearest `true` cell.
 
 All of these are threaded: start Julia with `-t N` (or `JULIA_NUM_THREADS`).

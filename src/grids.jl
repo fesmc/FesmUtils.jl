@@ -329,6 +329,25 @@ function lat_bounds(g::ProjGrid; margin::Real=0.1)
     return (max(latmin - margin, -90.0), min(latmax + margin, 90.0))
 end
 
+"""
+    xy_bounds(g, proj; npts=16) -> ((xmin, xmax), (ymin, ymax))
+
+Extent (km) of the cells of `g` in the projection `proj` (a PROJ string with
+`+units=km`), from `npts` points along each side of its outline. Exact for conformal
+projections, whose coordinates take their extremes on the outline.
+"""
+function xy_bounds(g::ProjGrid, proj::AbstractString; npts::Integer=16)
+    dx, dy = spacing(g)
+    x0, x1 = g.xc[1] - dx / 2, g.xc[end] + dx / 2
+    y0, y1 = g.yc[1] - dy / 2, g.yc[end] + dy / 2
+    trans = Proj.Transformation(g.proj, proj; always_xy=true)
+    s = range(0, 1; length=npts)
+    pts = vcat([(x0 + t * (x1 - x0), y) for t in s, y in (y0, y1)][:],
+               [(x, y0 + t * (y1 - y0)) for t in s, x in (x0, x1)][:])
+    xy = map(trans, pts)
+    return extrema(first.(xy)), extrema(last.(xy))
+end
+
 # ---------------------------------------------------------------------------
 # NetCDF grid file
 # ---------------------------------------------------------------------------

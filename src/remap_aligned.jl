@@ -100,8 +100,12 @@ Exact conservative remapping of `F` (size of `src`) onto `tgt`, on the same
 projection. `Ft` is the mean over the valid part of each target cell (NaN where
 there is none), and `f_valid` is the fraction of each target cell covered by valid
 source data. Threaded over rows.
+
+With `nsub`, the source may be on any projection, and the mean is estimated from
+`nsub` x `nsub` samples per target cell instead (see `remap_sampled.jl`).
 """
-remap(tgt::ProjGrid, src::ProjGrid, F::AbstractMatrix) = remap(AlignedMap(tgt, src), F)
+remap(tgt::ProjGrid, src::ProjGrid, F::AbstractMatrix; nsub::Union{Nothing,Integer}=nothing) =
+    nsub === nothing ? remap(AlignedMap(tgt, src), F) : _remap_sampled(tgt, src, F, nsub)
 
 function remap(m::AlignedMap, F::AbstractMatrix)
     size(F) == size(m.src) ||
@@ -162,9 +166,12 @@ end
 
 Area fraction of each class of the categorical field `M` within each target cell,
 relative to its valid part. `fracs[c]` is the fraction of class `c`; `missing`
-entries of `M` are excluded.
+entries of `M` are excluded. With `nsub`, the source may be on any projection and
+the fractions are estimated by supersampling.
 """
-function remap_fractions(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix, classes)
+function remap_fractions(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix, classes;
+                         nsub::Union{Nothing,Integer}=nothing)
+    nsub === nothing || return _remap_fractions_sampled(tgt, src, M, classes, nsub)
     m = AlignedMap(tgt, src)
     fracs = Dict{eltype(classes),Matrix{Float32}}()
     fv = zeros(Float32, size(tgt))
