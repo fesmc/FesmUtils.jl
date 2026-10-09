@@ -12,11 +12,11 @@ Utilities shared across FESM components and data processing.
 - `remap_fractions(tgt, src, M, classes)`: area fraction of each class of a categorical field (same methods).
 - `xy_bounds(g, proj)`: extent of a grid in another projection (e.g. to crop the target to a source tile).
 - `distance_to(mask, dx, dy)`: exact Euclidean distance to the nearest `true` cell.
-- `remap_dominant(tgt, src, M)`: class of a categorical field covering the largest area of each target cell (same projection, exact overlaps).
+- `remap_dominant(tgt, src, M; parent)`: class of a categorical field covering the largest area of each target cell (same projection, exact overlaps), optionally nested in a coarser classification.
 
 ## Masks and regions
 
-- `rasterize(g, rings)`: cells whose centre lies inside a polygon (rings of `(x, y)` in grid coordinates, even-odd rule).
+- `rasterize(g, rings)`, `rasterize!(mask, g, rings)`: cells whose centre lies inside a polygon (rings of `(x, y)` in grid coordinates, even-odd rule); the in-place version adds a polygon to a mask.
 - `erode(mask, r, dx)`, `dilate(mask, r, dx)`: erosion and dilation by a distance.
 - `flood_fill(mask, seeds)`: cells of `mask` connected to the seeds.
 - `extend_labels(L, allowed, dx)`: nearest label along paths through `allowed` cells.

@@ -189,19 +189,29 @@ function remap_fractions(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix, classe
 end
 
 """
-    remap_dominant(tgt::ProjGrid, src::ProjGrid, M) -> Mt
-    remap_dominant(m::AlignedMap, M) -> Mt
+    remap_dominant(tgt::ProjGrid, src::ProjGrid, M; parent=nothing) -> Mt
+    remap_dominant(m::AlignedMap, M; parent=nothing) -> Mt
 
 Class of the categorical field `M` (integers, size of `src`) covering the largest
 area of each target cell, on the same projection (exact overlaps). Ties go to the
 smaller class; target cells without source cells get 0. Threaded over rows.
-"""
-remap_dominant(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix{<:Integer}) =
-    remap_dominant(AlignedMap(tgt, src), M)
 
-function remap_dominant(m::AlignedMap, M::AbstractMatrix{T}) where {T<:Integer}
+With `parent = (Pt, Ps)`, a categorical field given on both grids (e.g. the coarser
+level of a hierarchy of regions, already remapped), only the source cells with
+`Ps == Pt[i, j]` count for target cell `(i, j)`, so the result stays nested in `Pt`.
+Target cells where none of them overlaps get 0.
+"""
+remap_dominant(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix{<:Integer}; parent=nothing) =
+    remap_dominant(AlignedMap(tgt, src), M; parent=parent)
+
+function remap_dominant(m::AlignedMap, M::AbstractMatrix{T}; parent=nothing) where {T<:Integer}
     size(M) == size(m.src) ||
         throw(DimensionMismatch("field size $(size(M)) does not match grid $(m.src.name) $(size(m.src))"))
+    if parent !== nothing
+        Pt, Ps = parent
+        (size(Pt) == size(m.tgt) && size(Ps) == size(m.src)) ||
+            throw(DimensionMismatch("parent fields do not match the grids"))
+    end
     nxt, nyt = size(m.tgt)
     wx, wy = m.wx, m.wy
     Mt = zeros(T, nxt, nyt)
@@ -212,6 +222,7 @@ function remap_dominant(m::AlignedMap, M::AbstractMatrix{T}) where {T<:Integer}
             empty!(cls)
             empty!(area)
             for (q, k) in enumerate(wy.ranges[j]), (p, l) in enumerate(wx.ranges[i])
+                parent === nothing || Ps[l, k] == Pt[i, j] || continue
                 w = wx.weights[i][p] * wy.weights[j][q]
                 c = M[l, k]
                 n = findfirst(==(c), cls)

@@ -59,4 +59,11 @@ end
         best = maximum(values(cnt))
         @test Mt[i, j] == minimum(c for (c, n) in cnt if n == best)
     end
+
+    # Nested: level-2 classes 11, 12 under level-1 classes 1, 2
+    P = [i <= 7 ? 1 : 2 for i in 1:12, j in 1:8]
+    Q = [P[i, j] == 1 ? (j <= 2 ? 11 : 12) : 21 for i in 1:12, j in 1:8]
+    Pt = remap_dominant(tgt, src, P)
+    Qt = remap_dominant(tgt, src, Q; parent=(Pt, P))
+    @test all(Qt .÷ 10 .== Pt)
 end

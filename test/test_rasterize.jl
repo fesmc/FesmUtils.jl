@@ -26,4 +26,8 @@
     m = rasterize(g, [[(-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0)]])
     @test count(m) == 16
     @test !any(rasterize(g, [far]))
+    # In place: union of two polygons
+    m = zeros(Bool, size(g))
+    rasterize!(m, g, [tri]); rasterize!(m, g, [far]); rasterize!(m, g, [sq])
+    @test m == (brute([tri]) .| brute([sq]))
 end

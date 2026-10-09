@@ -10,7 +10,18 @@ rings of `(x, y)` vertices in the coordinates of `g` (km). Rings may be open or
 closed. The even-odd rule is applied to all rings together, so the holes and parts
 of a multipolygon are rings of the same list. Exact and threaded over rows.
 """
-function rasterize(g::ProjGrid, rings::AbstractVector)
+rasterize(g::ProjGrid, rings::AbstractVector) =
+    BitMatrix(rasterize!(zeros(Bool, size(g)), g, rings))
+
+"""
+    rasterize!(mask::Matrix{Bool}, g::ProjGrid, rings) -> mask
+
+Set the cells of `mask` inside the polygon `rings` to true (see `rasterize`), leaving
+the others unchanged. Only the rows crossed by the polygon are visited, so many
+small polygons can be added to one mask.
+"""
+function rasterize!(mask::Matrix{Bool}, g::ProjGrid, rings::AbstractVector)
+    size(mask) == size(g) || throw(DimensionMismatch("mask size $(size(mask)) does not match grid $(g.name)"))
     nx, ny = size(g)
     x0, y0 = g.xc[1], g.yc[1]
     dx, dy = spacing(g)
@@ -42,9 +53,9 @@ function rasterize(g::ProjGrid, rings::AbstractVector)
         pos[j] += 1
     end
 
-    # Bool matrix while threaded: columns of a BitMatrix may share storage words
-    mask = zeros(Bool, nx, ny)
-    Threads.@threads for j in 1:ny
+    # (a Bool matrix, since columns of a BitMatrix may share storage words)
+    jrows = findall(>(0), diff(start))
+    Threads.@threads for j in jrows
         y = y0 + (j - 1) * dy
         xs = Float64[]
         @inbounds for n in start[j]:start[j+1]-1
@@ -61,7 +72,7 @@ function rasterize(g::ProjGrid, rings::AbstractVector)
             end
         end
     end
-    return BitMatrix(mask)
+    return mask
 end
 
 # Rows j (centres y0 + (j-1) dy) that each edge may cross; checked exactly later.
