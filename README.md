@@ -4,7 +4,7 @@ Utilities shared across FESM components and data processing.
 
 ## Grids and remapping (implemented)
 
-- `ProjGrid`: regular grid on a map projection (km), read from/written to cdo grid description files (`ProjGrid("grid_GRL-8KM.txt")`, `write_griddes`, `write_grid_nc`). `coarsen` and `crop` derive nested grids.
+- `ProjGrid`: regular grid on a map projection (km), read from/written to cdo grid description files (`ProjGrid("grid_GRL-8KM.txt")`, `write_griddes`, `write_grid_nc`). `coarsen` and `crop` derive nested grids. Polar stereographic (`polar_stereographic_proj`) and transverse Mercator (`transverse_mercator_proj`, e.g. UTM) projections; transverse Mercator grid descriptions give the projection as `proj_params` (PROJ string in m), as fesm-utils writes and reads them.
 - `LonLatGrid`: regular lon-lat grid (e.g. GEBCO).
 - `remap(tgt, src, F) -> (Ft, f_valid)`:
   - `src::ProjGrid` on the same projection: exact conservative remapping (separable 1D overlaps). Use `AlignedMap(tgt, src)` to reuse weights.

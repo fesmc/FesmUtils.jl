@@ -155,23 +155,47 @@ function polar_stereographic_proj(; lat_0, lat_ts, lon_0, a, rf, x_0=0, y_0=0)
 end
 
 """
+    transverse_mercator_proj(; lat_0, lon_0, k, a, rf, x_0=0, y_0=0)
+
+PROJ string (km units) for a transverse Mercator projection (e.g. UTM), with scale
+factor `k` at the central meridian `lon_0`. False easting and northing are in m, as
+in PROJ.
+"""
+function transverse_mercator_proj(; lat_0, lon_0, k, a, rf, x_0=0, y_0=0)
+    return "+proj=tmerc +lat_0=$lat_0 +lon_0=$lon_0 +k=$k " *
+           "+x_0=$x_0 +y_0=$y_0 +a=$a +rf=$rf +units=km"
+end
+
+"""
     cf_grid_mapping(g)
 
-CF grid-mapping attributes of `g` as a vector of pairs (false easting/northing in km).
+CF grid-mapping attributes of `g` as a vector of pairs (false easting/northing in km),
+for polar stereographic and transverse Mercator projections.
 """
 function cf_grid_mapping(g::ProjGrid)
     p = _proj_params(g.proj)
-    p["proj"] == "stere" || error("only polar stereographic grids are supported, got +proj=$(p["proj"])")
-    return [
-        "grid_mapping_name" => "polar_stereographic",
-        "straight_vertical_longitude_from_pole" => _float(p["lon_0"]),
-        "latitude_of_projection_origin" => _float(p["lat_0"]),
-        "standard_parallel" => _float(p["lat_ts"]),
+    common = [
         "false_easting" => _float(get(p, "x_0", "0")) / 1000,
         "false_northing" => _float(get(p, "y_0", "0")) / 1000,
         "semi_major_axis" => _float(p["a"]),
         "inverse_flattening" => _float(p["rf"]),
     ]
+    if p["proj"] == "stere"
+        return vcat([
+            "grid_mapping_name" => "polar_stereographic",
+            "straight_vertical_longitude_from_pole" => _float(p["lon_0"]),
+            "latitude_of_projection_origin" => _float(p["lat_0"]),
+            "standard_parallel" => _float(p["lat_ts"]),
+        ], common)
+    elseif p["proj"] == "tmerc"
+        return vcat([
+            "grid_mapping_name" => "transverse_mercator",
+            "longitude_of_central_meridian" => _float(p["lon_0"]),
+            "latitude_of_projection_origin" => _float(get(p, "lat_0", "0")),
+            "scale_factor_at_central_meridian" => _float(get(p, "k", get(p, "k_0", "1"))),
+        ], common)
+    end
+    error("only polar stereographic and transverse Mercator grids are supported, got +proj=$(p["proj"])")
 end
 
 # ---------------------------------------------------------------------------
@@ -181,8 +205,9 @@ end
 """
     ProjGrid(griddes; name)
 
-Read a cdo grid description file (`grid_<NAME>.txt`). The name defaults to the
-`<NAME>` part of the filename.
+Read a cdo grid description file (`grid_<NAME>.txt`) of a polar stereographic grid
+(CF keys) or a transverse Mercator grid (`proj_params`, a PROJ string in m, as
+written by fesm-utils). The name defaults to the `<NAME>` part of the filename.
 """
 function ProjGrid(griddes::AbstractString;
                   name::AbstractString=replace(basename(griddes), r"^grid_" => "", r"\.txt$" => ""))
@@ -194,18 +219,23 @@ function ProjGrid(griddes::AbstractString;
         d[k] = v
     end
     d["gridtype"] == "projection" || error("$griddes: gridtype must be projection")
-    d["grid_mapping_name"] == "polar_stereographic" || error("$griddes: only polar_stereographic is supported")
     (d["xunits"] == "km" && d["yunits"] == "km") || error("$griddes: axis units must be km")
 
-    proj = polar_stereographic_proj(
-        lat_0  = _num(d["latitude_of_projection_origin"]),
-        lat_ts = _num(d["standard_parallel"]),
-        lon_0  = _num(d["straight_vertical_longitude_from_pole"]),
-        a      = _num(d["semi_major_axis"]),
-        rf     = _num(d["inverse_flattening"]),
-        x_0    = _num(get(d, "false_easting", "0")) * 1000,
-        y_0    = _num(get(d, "false_northing", "0")) * 1000,
-    )
+    if get(d, "grid_mapping_name", "") == "polar_stereographic"
+        proj = polar_stereographic_proj(
+            lat_0  = _num(d["latitude_of_projection_origin"]),
+            lat_ts = _num(d["standard_parallel"]),
+            lon_0  = _num(d["straight_vertical_longitude_from_pole"]),
+            a      = _num(d["semi_major_axis"]),
+            rf     = _num(d["inverse_flattening"]),
+            x_0    = _num(get(d, "false_easting", "0")) * 1000,
+            y_0    = _num(get(d, "false_northing", "0")) * 1000,
+        )
+    elseif occursin("+proj=tmerc", get(d, "proj_params", ""))
+        proj = _tmerc_from_params(strip(d["proj_params"], '"'))
+    else
+        error("$griddes: only polar_stereographic (grid_mapping_name) and transverse Mercator (proj_params) are supported")
+    end
     nx, ny = parse(Int, d["xsize"]), parse(Int, d["ysize"])
     x0, dx = parse(Float64, d["xfirst"]), parse(Float64, d["xinc"])
     y0, dy = parse(Float64, d["yfirst"]), parse(Float64, d["yinc"])
@@ -235,11 +265,39 @@ function write_griddes(path::AbstractString, g::ProjGrid)
         println(io, "yfirst   = $(f(g.yc[1]))")
         println(io, "yinc     = $(f(dy))")
         println(io, "grid_mapping = crs")
-        for (k, v) in cf_grid_mapping(g)
-            println(io, "$k = $v")
+        if _proj_params(g.proj)["proj"] == "tmerc"
+            # cdo does not know the CF transverse_mercator mapping: the projection is
+            # given as a PROJ string in m, as fesm-utils (grid_cdo.f90) writes and reads it
+            println(io, "proj_params = \"$(_tmerc_params(g))\"")
+        else
+            for (k, v) in cf_grid_mapping(g)
+                println(io, "$k = $v")
+            end
         end
     end
     return path
+end
+
+# PROJ string (m) of the transverse Mercator projection of `g`, for grid descriptions
+function _tmerc_params(g::ProjGrid)
+    p = _proj_params(g.proj)
+    v(key, default) = _num(get(p, key, default))
+    return "+proj=tmerc +lon_0=$(v("lon_0", "0")) +lat_0=$(v("lat_0", "0")) " *
+           "+k=$(v("k", get(p, "k_0", "1"))) +x_0=$(v("x_0", "0")) +y_0=$(v("y_0", "0")) " *
+           "+a=$(v("a", "6378137")) +rf=$(v("rf", "298.257223563")) +units=m"
+end
+
+# Transverse Mercator projection (km) from the PROJ string of a grid description
+# (in m, defaults as in PROJ, WGS84 ellipsoid)
+function _tmerc_from_params(str::AbstractString)
+    p = _proj_params(str)
+    get(p, "units", "m") == "m" || error("proj_params must use +units=m: $str")
+    v(key, default) = _num(get(p, key, default))
+    return transverse_mercator_proj(
+        lat_0 = v("lat_0", "0"), lon_0 = v("lon_0", "0"), k = v("k", get(p, "k_0", "1")),
+        x_0 = v("x_0", "0"), y_0 = v("y_0", "0"),
+        a = v("a", "6378137"), rf = v("rf", "298.257223563"),
+    )
 end
 
 # ---------------------------------------------------------------------------
