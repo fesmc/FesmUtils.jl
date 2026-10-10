@@ -50,25 +50,38 @@ Base.size(g::ProjGrid) = (length(g.xc), length(g.yc))
 spacing(g::ProjGrid) = (g.xc[2] - g.xc[1], g.yc[2] - g.yc[1])
 
 """
-    LonLatGrid(lon, lat)
+    LonLatGrid(lon, lat; name="")
+    LonLatGrid(name, d)
 
-Regular lon-lat grid with ascending, uniformly spaced cell centres in degrees.
+Regular lon-lat grid with ascending, uniformly spaced cell centres in degrees. The
+second form is the global grid with spacing `d` (degrees) in longitude and latitude,
+with cell edges at -180° and -90°.
 """
 struct LonLatGrid
+    name::String
     lon::Vector{Float64}
     lat::Vector{Float64}
     dlon::Float64
     dlat::Float64
     isglobal::Bool
 
-    function LonLatGrid(lon::AbstractVector, lat::AbstractVector)
+    function LonLatGrid(lon::AbstractVector, lat::AbstractVector; name::AbstractString="")
         _check_axis(lon, "lon")
         _check_axis(lat, "lat")
         dlon = (lon[end] - lon[1]) / (length(lon) - 1)
         dlat = (lat[end] - lat[1]) / (length(lat) - 1)
         isglobal = isapprox(length(lon) * dlon, 360.0; rtol=AXIS_RTOL)
-        return new(collect(Float64, lon), collect(Float64, lat), dlon, dlat, isglobal)
+        return new(String(name), collect(Float64, lon), collect(Float64, lat), dlon, dlat, isglobal)
     end
+end
+
+function LonLatGrid(name::AbstractString, d::Real)
+    nlon, nlat = 360 / d, 180 / d
+    (isapprox(nlon, round(nlon); atol=1e-6) && isapprox(nlat, round(nlat); atol=1e-6)) ||
+        throw(ArgumentError("spacing $d does not divide 360 and 180 degrees"))
+    lon = -180 .+ d .* ((1:round(Int, nlon)) .- 0.5)
+    lat = -90 .+ d .* ((1:round(Int, nlat)) .- 0.5)
+    return LonLatGrid(lon, lat; name=name)
 end
 
 Base.size(g::LonLatGrid) = (length(g.lon), length(g.lat))
@@ -78,12 +91,18 @@ Base.size(g::LonLatGrid) = (length(g.lon), length(g.lat))
 # ---------------------------------------------------------------------------
 
 """
-    grid_name(prefix, dx)
+    grid_name(prefix, dx; units="km")
 
 Standard grid name for resolution `dx` (km): `grid_name("GRL", 0.5) == "GRL-500M"`,
-`grid_name("ANT", 8) == "ANT-8KM"`.
+`grid_name("ANT", 8) == "ANT-8KM"`. With `units="deg"`, for lon-lat grids:
+`grid_name("GLOBAL", 0.25; units="deg") == "GLOBAL-0.25DEG"`.
 """
-function grid_name(prefix::AbstractString, dx::Real)
+function grid_name(prefix::AbstractString, dx::Real; units::AbstractString="km")
+    if units == "deg"
+        d = round(dx; digits=6)
+        return "$prefix-$(isinteger(d) ? Int(d) : d)DEG"
+    end
+    units == "km" || throw(ArgumentError("units must be \"km\" or \"deg\""))
     if dx < 1
         m = dx * 1000
         isinteger(round(m; digits=6)) || throw(ArgumentError("dx=$dx km is not a whole number of metres"))
@@ -300,6 +319,31 @@ function _tmerc_from_params(str::AbstractString)
     )
 end
 
+"""
+    write_griddes(path, g::LonLatGrid)
+
+Write the cdo grid description file of the lon-lat grid `g`.
+"""
+function write_griddes(path::AbstractString, g::LonLatGrid)
+    nx, ny = size(g)
+    f(v) = string(round(v; digits=8))
+    open(path, "w") do io
+        println(io, "gridtype = lonlat")
+        println(io, "gridsize = $(nx*ny)")
+        println(io, "xsize    = $nx")
+        println(io, "ysize    = $ny")
+        println(io, "xname    = lon")
+        println(io, "xunits   = degrees_east")
+        println(io, "yname    = lat")
+        println(io, "yunits   = degrees_north")
+        println(io, "xfirst   = $(f(g.lon[1]))")
+        println(io, "xinc     = $(f(g.dlon))")
+        println(io, "yfirst   = $(f(g.lat[1]))")
+        println(io, "yinc     = $(f(g.dlat))")
+    end
+    return path
+end
+
 # ---------------------------------------------------------------------------
 # Geographic coordinates and cell areas
 # ---------------------------------------------------------------------------
@@ -356,6 +400,33 @@ function cell_area(g::ProjGrid, lon::AbstractMatrix, lat::AbstractMatrix)
     return area
 end
 
+# WGS84 ellipsoid
+const WGS84_A = 6378137.0
+const WGS84_F = 1 / 298.257223563
+
+# Area (m²) of the zone of the WGS84 ellipsoid from the equator to latitude `lat`, per
+# radian of longitude
+function _zone_area(lat::Real)
+    e2 = WGS84_F * (2 - WGS84_F)
+    e = sqrt(e2)
+    b2 = (WGS84_A * (1 - WGS84_F))^2
+    s = sind(lat)
+    return b2 / 2 * (s / (1 - e2 * s^2) + atanh(e * s) / e)
+end
+
+"""
+    cell_area(g::LonLatGrid)
+
+Area (m²) of each cell of the lon-lat grid `g` on the WGS84 ellipsoid.
+"""
+function cell_area(g::LonLatGrid)
+    band = map(g.lat) do lat
+        lo, hi = max(lat - g.dlat / 2, -90.0), min(lat + g.dlat / 2, 90.0)
+        deg2rad(g.dlon) * (_zone_area(hi) - _zone_area(lo))
+    end
+    return repeat(permutedims(band), length(g.lon))
+end
+
 """
     lat_bounds(g; margin=0.1)
 
@@ -386,6 +457,9 @@ function lat_bounds(g::ProjGrid; margin::Real=0.1)
     end
     return (max(latmin - margin, -90.0), min(latmax + margin, 90.0))
 end
+
+lat_bounds(g::LonLatGrid; margin::Real=0.0) =
+    (max(g.lat[1] - g.dlat / 2 - margin, -90.0), min(g.lat[end] + g.dlat / 2 + margin, 90.0))
 
 """
     xy_bounds(g, proj; npts=16) -> ((xmin, xmax), (ymin, ymax))
@@ -432,6 +506,29 @@ function write_grid_nc(path::AbstractString, g::ProjGrid)
 end
 
 """
+    write_grid_nc(path, g::LonLatGrid)
+
+Write the grid file of the lon-lat grid `g`: its axes and the cell areas `area` (m²).
+"""
+function write_grid_nc(path::AbstractString, g::LonLatGrid)
+    NCDataset(path, "c") do ds
+        init_grid_nc!(ds, g)
+        defVar(ds, "area", Float32.(cell_area(g)), grid_dims(g); deflatelevel=1, shuffle=true,
+               attrib=["units" => "m^2"])
+    end
+    return path
+end
+
+"""
+    grid_dims(g)
+
+Names of the dimensions of fields on `g` in NetCDF files: ("xc", "yc") for projected
+grids, ("lon", "lat") for lon-lat grids.
+"""
+grid_dims(::ProjGrid) = ("xc", "yc")
+grid_dims(::LonLatGrid) = ("lon", "lat")
+
+"""
     init_grid_nc!(ds, g)
 
 Define the `xc`, `yc` axes and the `crs` grid-mapping variable of `g` in an open dataset.
@@ -444,5 +541,14 @@ function init_grid_nc!(ds::NCDataset, g::ProjGrid)
         "standard_name" => "projection_y_coordinate", "units" => "km", "axis" => "Y"])
     crs = defVar(ds, "crs", Int32, (); attrib=vcat(cf_grid_mapping(g), ["proj_params" => g.proj]))
     crs[] = Int32(0)
+    return ds
+end
+
+function init_grid_nc!(ds::NCDataset, g::LonLatGrid)
+    ds.attrib["grid_name"] = g.name
+    defVar(ds, "lon", g.lon, ("lon",); attrib=[
+        "standard_name" => "longitude", "units" => "degrees_east", "axis" => "X"])
+    defVar(ds, "lat", g.lat, ("lat",); attrib=[
+        "standard_name" => "latitude", "units" => "degrees_north", "axis" => "Y"])
     return ds
 end

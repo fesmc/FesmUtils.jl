@@ -1,62 +1,72 @@
-# Exact conservative remapping between regular grids on the same projection.
+# Exact conservative remapping between regular grids whose cells are aligned with
+# each other's axes: projected grids on the same projection, or lon-lat grids.
 #
-# Cells of both grids are axis-aligned rectangles, so the overlap area of a source
-# and a target cell is the product of their 1D overlaps along x and y. The weights
-# are then two small 1D operators, applied in two threaded passes:
+# The overlap area of a source and a target cell is then the product of their 1D
+# overlaps along x and y (for lon-lat grids, along longitude and along sin(latitude),
+# which is proportional to area). The weights are two small 1D operators, applied in
+# two threaded passes:
 #
 #     Ft = Wx * F * Wy'
 #
 # Missing source values (`missing` or NaN) are excluded, and the result is the mean
-# over the valid part of each target cell. Areas are projected areas.
+# over the valid part of each target cell. Areas are projected areas on projected
+# grids, and areas on the sphere on lon-lat grids.
 
 """
-    Overlap1D(tgt, src)
+    Overlap1D(tgt_edges, src_edges; period=nothing)
 
-Overlap weights of 1D cells with centres `tgt` onto cells with centres `src`:
-for target cell `i`, source cells `ranges[i]` cover the fractions `weights[i]`
-of its length.
+Overlap weights of 1D cells with ascending edges `tgt_edges` onto cells with
+ascending edges `src_edges`: for target cell `i`, source cells `index[i]` cover the
+fractions `weights[i]` of its length. With `period` (e.g. 360 for longitudes), the
+source cells repeat with that period.
 """
 struct Overlap1D
-    ranges::Vector{UnitRange{Int}}
+    index::Vector{Vector{Int}}
     weights::Vector{Vector{Float64}}
 end
 
-function Overlap1D(tgt::AbstractVector{<:Real}, src::AbstractVector{<:Real})
-    dt = (tgt[end] - tgt[1]) / (length(tgt) - 1)
-    ds = (src[end] - src[1]) / (length(src) - 1)
-    ns = length(src)
-    tol = 1e-9 * min(dt, ds)
-
-    ranges = Vector{UnitRange{Int}}(undef, length(tgt))
-    weights = Vector{Vector{Float64}}(undef, length(tgt))
-    for (i, xt) in enumerate(tgt)
-        lo, hi = xt - dt / 2, xt + dt / 2
-        k0 = max(1, floor(Int, (lo - (src[1] - ds / 2)) / ds) + 1)
-        k1 = min(ns, ceil(Int, (hi - (src[1] - ds / 2)) / ds))
+function Overlap1D(te::AbstractVector{<:Real}, se::AbstractVector{<:Real}; period=nothing)
+    nt, ns = length(te) - 1, length(se) - 1
+    tol = 1e-9 * min(minimum(diff(te)), minimum(diff(se)))
+    shifts = period === nothing ? (0.0,) : (-period, 0.0, period)
+    index = Vector{Vector{Int}}(undef, nt)
+    weights = Vector{Vector{Float64}}(undef, nt)
+    for i in 1:nt
+        lo, hi = te[i], te[i+1]
         ks = Int[]
         ws = Float64[]
-        for k in k0:k1
-            ov = min(hi, src[k] + ds / 2) - max(lo, src[k] - ds / 2)
-            if ov > tol
-                push!(ks, k)
-                push!(ws, ov / dt)
+        for s in shifts
+            k0 = max(1, searchsortedlast(se, lo - s))
+            k1 = min(ns, searchsortedfirst(se, hi - s) - 1)
+            for k in k0:k1
+                ov = min(hi, se[k+1] + s) - max(lo, se[k] + s)
+                if ov > tol
+                    push!(ks, k)
+                    push!(ws, ov / (hi - lo))
+                end
             end
         end
-        ranges[i] = isempty(ks) ? (1:0) : (ks[1]:ks[end])
+        index[i] = ks
         weights[i] = ws
     end
-    return Overlap1D(ranges, weights)
+    return Overlap1D(index, weights)
 end
+
+# Edges of cells with uniformly spaced centres c
+_edges(c::AbstractVector) = (d = (c[end] - c[1]) / (length(c) - 1); vcat(c .- d / 2, c[end] + d / 2))
+
+# Latitude edges as sin(latitude), proportional to the area of the bands from the equator
+_sin_edges(lat::AbstractVector) = sind.(clamp.(_edges(lat), -90.0, 90.0))
 
 """
     AlignedMap(tgt, src)
 
-Conservative remapping weights from `src` to `tgt`, two `ProjGrid`s on the same
-projection. Build once and reuse for all fields of a source.
+Conservative remapping weights from `src` to `tgt`: two `ProjGrid`s on the same
+projection, or two `LonLatGrid`s. Build once and reuse for all fields of a source.
 """
-struct AlignedMap
-    tgt::ProjGrid
-    src::ProjGrid
+struct AlignedMap{G<:Union{ProjGrid,LonLatGrid}}
+    tgt::G
+    src::G
     wx::Overlap1D
     wy::Overlap1D
 end
@@ -64,8 +74,12 @@ end
 function AlignedMap(tgt::ProjGrid, src::ProjGrid)
     same_projection(tgt, src) ||
         throw(ArgumentError("grids $(tgt.name) and $(src.name) are not on the same projection"))
-    return AlignedMap(tgt, src, Overlap1D(tgt.xc, src.xc), Overlap1D(tgt.yc, src.yc))
+    return AlignedMap(tgt, src, Overlap1D(_edges(tgt.xc), _edges(src.xc)), Overlap1D(_edges(tgt.yc), _edges(src.yc)))
 end
+
+AlignedMap(tgt::LonLatGrid, src::LonLatGrid) =
+    AlignedMap(tgt, src, Overlap1D(_edges(tgt.lon), _edges(src.lon); period=360.0),
+               Overlap1D(_sin_edges(tgt.lat), _sin_edges(src.lat)))
 
 """
     same_projection(a, b)
@@ -93,17 +107,20 @@ function _outtype(F::AbstractArray)
 end
 
 """
+    remap(tgt::LonLatGrid, src::LonLatGrid, F) -> (Ft, f_valid)
     remap(tgt::ProjGrid, src::ProjGrid, F) -> (Ft, f_valid)
     remap(m::AlignedMap, F) -> (Ft, f_valid)
 
 Exact conservative remapping of `F` (size of `src`) onto `tgt`, on the same
-projection. `Ft` is the mean over the valid part of each target cell (NaN where
+projection or both lon-lat grids. `Ft` is the mean over the valid part of each target cell (NaN where
 there is none), and `f_valid` is the fraction of each target cell covered by valid
 source data. Threaded over rows.
 
 With `nsub`, the source may be on any projection, and the mean is estimated from
 `nsub` x `nsub` samples per target cell instead (see `remap_sampled.jl`).
 """
+remap(tgt::LonLatGrid, src::LonLatGrid, F::AbstractMatrix) = remap(AlignedMap(tgt, src), F)
+
 remap(tgt::ProjGrid, src::ProjGrid, F::AbstractMatrix; nsub::Union{Nothing,Integer}=nothing) =
     nsub === nothing ? remap(AlignedMap(tgt, src), F) : _remap_sampled(tgt, src, F, nsub)
 
@@ -114,8 +131,8 @@ function remap(m::AlignedMap, F::AbstractMatrix)
     wx, wy = m.wx, m.wy
 
     # Source rows needed by any target row
-    used = filter(!isempty, wy.ranges)
-    ks = isempty(used) ? (1:0) : (minimum(first, used):maximum(last, used))
+    used = filter(!isempty, wy.index)
+    ks = isempty(used) ? (1:0) : (minimum(minimum, used):maximum(maximum, used))
     koff = first(ks) - 1
 
     # Pass 1: along x, for each needed source row
@@ -126,7 +143,7 @@ function remap(m::AlignedMap, F::AbstractMatrix)
         @inbounds for i in 1:nxt
             a = 0.0
             b = 0.0
-            for (n, l) in enumerate(wx.ranges[i])
+            for (n, l) in enumerate(wx.index[i])
                 v = F[l, k]
                 if _isvalid(v)
                     w = wx.weights[i][n]
@@ -146,7 +163,7 @@ function remap(m::AlignedMap, F::AbstractMatrix)
     Threads.@threads for j in 1:nyt
         a = zeros(Float64, nxt)
         b = zeros(Float64, nxt)
-        @inbounds for (n, k) in enumerate(wy.ranges[j])
+        @inbounds for (n, k) in enumerate(wy.index[j])
             w = wy.weights[j][n]
             for i in 1:nxt
                 a[i] += w * num[i, k-koff]
@@ -221,7 +238,7 @@ function remap_dominant(m::AlignedMap, M::AbstractMatrix{T}; parent=nothing) whe
         @inbounds for i in 1:nxt
             empty!(cls)
             empty!(area)
-            for (q, k) in enumerate(wy.ranges[j]), (p, l) in enumerate(wx.ranges[i])
+            for (q, k) in enumerate(wy.index[j]), (p, l) in enumerate(wx.index[i])
                 parent === nothing || Ps[l, k] == Pt[i, j] || continue
                 w = wx.weights[i][p] * wy.weights[j][q]
                 c = M[l, k]

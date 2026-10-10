@@ -1,8 +1,10 @@
-# Remapping onto a projected grid by supersampling, from a regular lon-lat grid or
-# from a projected grid on another projection.
+# Remapping by supersampling: onto a projected grid from a regular lon-lat grid or
+# from a projected grid on another projection, and onto a lon-lat grid from a
+# projected grid.
 #
 # Each target cell is sampled at nsub x nsub points spaced uniformly in the
-# projected plane. Each sample takes the value of the source cell that contains it,
+# projected plane (on a lon-lat grid: in longitude and in sin(latitude), i.e. by
+# area). Each sample takes the value of the source cell that contains it,
 # so the mean over samples converges to the conservative (area-weighted) cell mean
 # as nsub grows. Choose nsub so the sample spacing is at most about half the
 # source spacing. Threaded over target rows, with one Proj transformation per task.
@@ -12,6 +14,8 @@
 _sample_transform(tgt::ProjGrid, ::LonLatGrid) = _inverse_transform(tgt)
 _sample_transform(tgt::ProjGrid, src::ProjGrid) =
     Proj.Transformation(tgt.proj, src.proj; always_xy=true, ctx=Proj.proj_context_create())
+_sample_transform(::LonLatGrid, src::ProjGrid) =
+    Proj.Transformation("EPSG:4326", src.proj; always_xy=true, ctx=Proj.proj_context_create())
 
 # Source cell containing (lon, lat), or (0, 0) if outside the source grid.
 @inline function _cell_index(src::LonLatGrid, lon::Float64, lat::Float64)
@@ -147,19 +151,50 @@ function _supersample(f, tgt::ProjGrid, src::Union{LonLatGrid,ProjGrid}, nsub::I
     return nothing
 end
 
+# Samples of a lon-lat target from a projected source: only the target rows within
+# the latitudes of the source are sampled.
+function _supersample(f, tgt::LonLatGrid, src::ProjGrid, nsub::Integer)
+    nsub >= 1 || throw(ArgumentError("nsub must be >= 1"))
+    lo, hi = lat_bounds(src)
+    rows = findall(lat -> lat + tgt.dlat / 2 >= lo && lat - tgt.dlat / 2 <= hi, tgt.lat)
+    off = ((1:nsub) .- 0.5) ./ nsub
+    tasks = map(_chunks(length(rows))) do jj
+        Threads.@spawn begin
+            trans = _sample_transform(tgt, src)
+            for j in rows[jj]
+                s0 = sind(max(tgt.lat[j] - tgt.dlat / 2, -90.0))
+                s1 = sind(min(tgt.lat[j] + tgt.dlat / 2, 90.0))
+                for oy in off
+                    lat = asind(s0 + oy * (s1 - s0))
+                    for i in eachindex(tgt.lon), ox in off
+                        u, v = trans((tgt.lon[i] + (ox - 0.5) * tgt.dlon, lat))
+                        is, js = _cell_index(src, u, v)
+                        is == 0 || f(i, j, is, js)
+                    end
+                end
+            end
+        end
+    end
+    foreach(wait, tasks)
+    return nothing
+end
+
 """
     remap(tgt::ProjGrid, src::LonLatGrid, F; nsub) -> (Ft, f_valid)
     remap(tgt::ProjGrid, src::ProjGrid, F; nsub) -> (Ft, f_valid)
+    remap(tgt::LonLatGrid, src::ProjGrid, F; nsub) -> (Ft, f_valid)
 
 Area-weighted mean of the field `F` (size of `src`) over each target cell,
 estimated from `nsub` x `nsub` samples per cell. The source is a lon-lat grid, or a
-projected grid on any projection. `Ft` is the mean over valid samples (NaN where
+projected grid on any projection; a lon-lat target takes a projected source. `Ft` is the mean over valid samples (NaN where
 there are none), and `f_valid` the fraction of valid samples. Threaded.
 """
 remap(tgt::ProjGrid, src::LonLatGrid, F::AbstractMatrix; nsub::Integer) =
     _remap_sampled(tgt, src, F, nsub)
+remap(tgt::LonLatGrid, src::ProjGrid, F::AbstractMatrix; nsub::Integer) =
+    _remap_sampled(tgt, src, F, nsub)
 
-function _remap_sampled(tgt::ProjGrid, src, F::AbstractMatrix, nsub::Integer)
+function _remap_sampled(tgt::Union{ProjGrid,LonLatGrid}, src, F::AbstractMatrix, nsub::Integer)
     size(F) == size(src) ||
         throw(DimensionMismatch("field size $(size(F)) does not match source grid $(size(src))"))
     num = zeros(Float64, size(tgt))
@@ -179,15 +214,18 @@ end
 """
     remap_fractions(tgt::ProjGrid, src::LonLatGrid, M, classes; nsub) -> (fracs, f_valid)
     remap_fractions(tgt::ProjGrid, src::ProjGrid, M, classes; nsub) -> (fracs, f_valid)
+    remap_fractions(tgt::LonLatGrid, src::ProjGrid, M, classes; nsub) -> (fracs, f_valid)
 
 Area fraction of each class of the categorical field `M` (on a lon-lat grid, or a
 projected grid on any projection) within each target cell, relative to its valid
 part, from `nsub` x `nsub` samples per cell.
 """
+remap_fractions(tgt::LonLatGrid, src::ProjGrid, M::AbstractMatrix, classes; nsub::Integer) =
+    _remap_fractions_sampled(tgt, src, M, classes, nsub)
 remap_fractions(tgt::ProjGrid, src::LonLatGrid, M::AbstractMatrix, classes; nsub::Integer) =
     _remap_fractions_sampled(tgt, src, M, classes, nsub)
 
-function _remap_fractions_sampled(tgt::ProjGrid, src, M::AbstractMatrix, classes, nsub::Integer)
+function _remap_fractions_sampled(tgt::Union{ProjGrid,LonLatGrid}, src, M::AbstractMatrix, classes, nsub::Integer)
     size(M) == size(src) ||
         throw(DimensionMismatch("field size $(size(M)) does not match source grid $(size(src))"))
     cls = collect(classes)

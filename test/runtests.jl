@@ -5,6 +5,7 @@ using NCDatasets
 include("test_grids.jl")
 include("test_remap_aligned.jl")
 include("test_remap_sampled.jl")
+include("test_lonlat.jl")
 include("test_smooth.jl")
 include("test_distance.jl")
 include("test_morphology.jl")
