@@ -244,3 +244,78 @@ function _remap_fractions_sampled(tgt::Union{ProjGrid,LonLatGrid}, src, M::Abstr
     end
     return fracs, Float32.(nvalid ./ nsub^2)
 end
+
+"""
+    SampledMap(tgt, src, nsub)
+    remap(m::SampledMap, F) -> (Ft, f_valid)
+
+Sampled conservative remapping from `src` to `tgt`, as `remap(tgt, src, F; nsub)`,
+with the sampling done once: for each target cell, the source cells that its
+`nsub` x `nsub` samples fall in, and how many samples fall in each. Build it once and
+reuse it for many fields on the same grids (e.g. the time steps of a field). Its size
+grows with the number of samples, so build it only for grids and sources where that
+is moderate.
+"""
+struct SampledMap{T<:Union{ProjGrid,LonLatGrid},S<:Union{ProjGrid,LonLatGrid}}
+    tgt::T
+    src::S
+    nsub::Int
+    ptr::Vector{Int}        # samples of target cell k (linear index): ptr[k]:ptr[k+1]-1
+    idx::Vector{Int}        # linear index of the source cell
+    cnt::Vector{Int32}      # number of samples in the source cell
+end
+
+function SampledMap(tgt::Union{ProjGrid,LonLatGrid}, src::Union{ProjGrid,LonLatGrid}, nsub::Integer)
+    nx, ny = size(tgt)
+    ns = size(src)[1]
+    rows = [Tuple{Int32,Int}[] for _ in 1:ny]
+    _supersample(tgt, src, nsub) do i, j, is, js
+        push!(rows[j], (Int32(i), is + (js - 1) * ns))
+    end
+    ptr = Vector{Int}(undef, nx * ny + 1)
+    idx = Int[]
+    cnt = Int32[]
+    ptr[1] = 1
+    for j in 1:ny
+        r = sort!(rows[j])
+        rows[j] = Tuple{Int32,Int}[]
+        p = 1
+        for i in 1:nx
+            while p <= length(r) && r[p][1] == i
+                s, n = r[p][2], 0
+                while p <= length(r) && r[p][1] == i && r[p][2] == s
+                    n += 1
+                    p += 1
+                end
+                push!(idx, s)
+                push!(cnt, Int32(n))
+            end
+            ptr[i+(j-1)*nx+1] = length(idx) + 1
+        end
+    end
+    return SampledMap(tgt, src, Int(nsub), ptr, idx, cnt)
+end
+
+function remap(m::SampledMap, F::AbstractMatrix)
+    size(F) == size(m.src) ||
+        throw(DimensionMismatch("field size $(size(F)) does not match source grid $(size(m.src))"))
+    nx, ny = size(m.tgt)
+    T = _outtype(F)
+    Ft = Matrix{T}(undef, nx, ny)
+    fv = Matrix{Float32}(undef, nx, ny)
+    Threads.@threads for j in 1:ny
+        @inbounds for i in 1:nx
+            k = i + (j - 1) * nx
+            num, n = 0.0, 0
+            for p in m.ptr[k]:m.ptr[k+1]-1
+                v = F[m.idx[p]]
+                _isvalid(v) || continue
+                num += m.cnt[p] * v
+                n += m.cnt[p]
+            end
+            Ft[i, j] = n > 0 ? T(num / n) : T(NaN)
+            fv[i, j] = Float32(n / m.nsub^2)
+        end
+    end
+    return Ft, fv
+end

@@ -141,3 +141,20 @@ end
     @test all(isnan, Ft) && all(fv .== 0)
     @test isequal((Ft, fv), remap_bruteforce(tgt, src, F, 10))
 end
+
+@testset "sampled map" begin
+    proj = polar_stereographic_proj(lat_0=90, lat_ts=70, lon_0=-45, a=6378137, rf=298.257223563)
+    proj2 = polar_stereographic_proj(lat_0=90, lat_ts=71, lon_0=-39, a=6378137, rf=298.257223563)
+    tgt = ProjGrid("T", (-720, 960), (-3450, -570), 16, proj)
+    ll = LonLatGrid(collect(-179.75:0.5:179.75), collect(50.25:0.5:89.75))
+    pg = ProjGrid("S", (-800, 800), (-3400, -600), 10, proj2)
+    for (t, s) in ((tgt, ll), (tgt, pg), (LonLatGrid("G", 1), pg))
+        F = rand(Float32, size(s)...)
+        F[1:3:end, :] .= NaN32
+        m = SampledMap(t, s, 4)
+        A, fa = remap(t, s, F; nsub=4)
+        B, fb = remap(m, view(cat(F, F; dims=3), :, :, 2))
+        @test fa == fb
+        @test isequal(isnan.(A), isnan.(B)) && maximum(abs.(filter(!isnan, A .- B))) < 1e-5
+    end
+end
