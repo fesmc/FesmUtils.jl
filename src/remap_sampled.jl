@@ -19,7 +19,7 @@ _sample_transform(::LonLatGrid, src::ProjGrid) =
 
 # Source cell containing (lon, lat), or (0, 0) if outside the source grid.
 @inline function _cell_index(src::LonLatGrid, lon::Float64, lat::Float64)
-    j = floor(Int, (lat - src.lat[1]) / src.dlat + 0.5) + 1
+    j = lat == src.latedges[end] ? length(src.lat) : searchsortedlast(src.latedges, lat)
     1 <= j <= length(src.lat) || return (0, 0)
     i = floor(Int, mod(lon - src.lon[1] + src.dlon / 2, 360.0) / src.dlon) + 1
     if i > length(src.lon)
@@ -156,14 +156,14 @@ end
 function _supersample(f, tgt::LonLatGrid, src::ProjGrid, nsub::Integer)
     nsub >= 1 || throw(ArgumentError("nsub must be >= 1"))
     lo, hi = lat_bounds(src)
-    rows = findall(lat -> lat + tgt.dlat / 2 >= lo && lat - tgt.dlat / 2 <= hi, tgt.lat)
+    rows = findall(j -> tgt.latedges[j+1] >= lo && tgt.latedges[j] <= hi, eachindex(tgt.lat))
     off = ((1:nsub) .- 0.5) ./ nsub
     tasks = map(_chunks(length(rows))) do jj
         Threads.@spawn begin
             trans = _sample_transform(tgt, src)
             for j in rows[jj]
-                s0 = sind(max(tgt.lat[j] - tgt.dlat / 2, -90.0))
-                s1 = sind(min(tgt.lat[j] + tgt.dlat / 2, 90.0))
+                s0 = sind(tgt.latedges[j])
+                s1 = sind(tgt.latedges[j+1])
                 for oy in off
                     lat = asind(s0 + oy * (s1 - s0))
                     for i in eachindex(tgt.lon), ox in off

@@ -6,7 +6,7 @@ import Proj
 export ProjGrid, LonLatGrid, spacing, grid_name, coarsen, crop
 export polar_stereographic_proj, transverse_mercator_proj, cf_grid_mapping
 export write_griddes, write_grid_nc, init_grid_nc!, grid_dims, lonlat, cell_area, lat_bounds, xy_bounds
-export grid_angle, rotate_to_grid, rotate_to_geographic
+export grid_angle, rotate_to_grid, rotate_to_geographic, uniform_lat
 export AlignedMap, same_projection, remap, remap_fractions, remap_dominant, remap_bilinear
 export smooth
 export distance_to, erode, dilate, flood_fill, extend_labels

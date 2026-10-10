@@ -55,8 +55,6 @@ end
 # Edges of cells with uniformly spaced centres c
 _edges(c::AbstractVector) = (d = (c[end] - c[1]) / (length(c) - 1); vcat(c .- d / 2, c[end] + d / 2))
 
-# Latitude edges as sin(latitude), proportional to the area of the bands from the equator
-_sin_edges(lat::AbstractVector) = sind.(clamp.(_edges(lat), -90.0, 90.0))
 
 """
     AlignedMap(tgt, src)
@@ -79,7 +77,7 @@ end
 
 AlignedMap(tgt::LonLatGrid, src::LonLatGrid) =
     AlignedMap(tgt, src, Overlap1D(_edges(tgt.lon), _edges(src.lon); period=360.0),
-               Overlap1D(_sin_edges(tgt.lat), _sin_edges(src.lat)))
+               Overlap1D(sind.(tgt.latedges), sind.(src.latedges)))
 
 """
     same_projection(a, b)

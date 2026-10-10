@@ -31,7 +31,15 @@ function _position(src::LonLatGrid, lon, lat)
     n = length(src.lon)
     fx = src.isglobal ? mod(lon - src.lon[1], 360.0) / src.dlon :
                         mod(lon - src.lon[1] + src.dlon / 2, 360.0) / src.dlon - 0.5
-    return (_bracket(fx, n, src.isglobal), _bracket((lat - src.lat[1]) / src.dlat, length(src.lat), false))
+    return (_bracket(fx, n, src.isglobal), _bracket(_lat_position(src.lat, lat), length(src.lat), false))
+end
+
+# Position of latitude `lat` in cells from the first centre (0-based) on the ascending,
+# possibly unevenly spaced centres `c`, extrapolated beyond the outermost ones.
+function _lat_position(c::AbstractVector, lat)
+    n = length(c)
+    k = clamp(searchsortedlast(c, lat), 1, n - 1)
+    return k - 1 + (lat - c[k]) / (c[k+1] - c[k])
 end
 
 """

@@ -50,12 +50,16 @@ Base.size(g::ProjGrid) = (length(g.xc), length(g.yc))
 spacing(g::ProjGrid) = (g.xc[2] - g.xc[1], g.yc[2] - g.yc[1])
 
 """
-    LonLatGrid(lon, lat; name="")
+    LonLatGrid(lon, lat; name="", latedges=nothing)
     LonLatGrid(name, d)
 
-Regular lon-lat grid with ascending, uniformly spaced cell centres in degrees. The
-second form is the global grid with spacing `d` (degrees) in longitude and latitude,
-with cell edges at -180° and -90°.
+Lon-lat grid with ascending cell centres in degrees: uniformly spaced longitudes, and
+ascending latitudes that may be unevenly spaced (e.g. a Gaussian grid). The cell edges
+in latitude are `latedges` (length `length(lat) + 1`), or else halfway between the
+centres, and half a spacing beyond the outermost centres; an outermost edge is put at
+the pole when the next cell would reach beyond it. `dlat` is the mean latitude
+spacing. The second form is the global grid with spacing `d` (degrees) in longitude
+and latitude, with cell edges at -180° and -90°.
 """
 struct LonLatGrid
     name::String
@@ -63,17 +67,39 @@ struct LonLatGrid
     lat::Vector{Float64}
     dlon::Float64
     dlat::Float64
+    latedges::Vector{Float64}
     isglobal::Bool
 
-    function LonLatGrid(lon::AbstractVector, lat::AbstractVector; name::AbstractString="")
+    function LonLatGrid(lon::AbstractVector, lat::AbstractVector; name::AbstractString="", latedges=nothing)
         _check_axis(lon, "lon")
-        _check_axis(lat, "lat")
+        length(lat) >= 2 && all(>(0), diff(lat)) || throw(ArgumentError("lat must be ascending, with at least 2 points"))
         dlon = (lon[end] - lon[1]) / (length(lon) - 1)
         dlat = (lat[end] - lat[1]) / (length(lat) - 1)
+        edges = latedges === nothing ? _lat_edges(lat) : collect(Float64, latedges)
+        (length(edges) == length(lat) + 1 && all(k -> edges[k] <= lat[k] <= edges[k+1], eachindex(lat)) &&
+         -90 <= edges[1] && edges[end] <= 90) ||
+            throw(ArgumentError("latedges must bound the latitudes, within -90 and 90"))
         isglobal = isapprox(length(lon) * dlon, 360.0; rtol=AXIS_RTOL)
-        return new(String(name), collect(Float64, lon), collect(Float64, lat), dlon, dlat, isglobal)
+        return new(String(name), collect(Float64, lon), collect(Float64, lat), dlon, dlat, edges, isglobal)
     end
 end
+
+# Latitude edges halfway between the centres, and half a spacing beyond the outermost
+# ones, at the pole when the next cell would reach beyond it.
+function _lat_edges(lat::AbstractVector)
+    n = length(lat)
+    e = Vector{Float64}(undef, n + 1)
+    for k in 2:n
+        e[k] = (lat[k-1] + lat[k]) / 2
+    end
+    d1, dn = lat[2] - lat[1], lat[n] - lat[n-1]
+    e[1] = lat[1] - d1 < -90 ? -90.0 : lat[1] - d1 / 2
+    e[n+1] = lat[n] + dn > 90 ? 90.0 : lat[n] + dn / 2
+    return e
+end
+
+"True if the latitudes of `g` are uniformly spaced."
+uniform_lat(g::LonLatGrid) = all(d -> isapprox(d, g.dlat; rtol=AXIS_RTOL), diff(g.lat))
 
 function LonLatGrid(name::AbstractString, d::Real)
     nlon, nlat = 360 / d, 180 / d
@@ -338,8 +364,12 @@ function write_griddes(path::AbstractString, g::LonLatGrid)
         println(io, "yunits   = degrees_north")
         println(io, "xfirst   = $(f(g.lon[1]))")
         println(io, "xinc     = $(f(g.dlon))")
-        println(io, "yfirst   = $(f(g.lat[1]))")
-        println(io, "yinc     = $(f(g.dlat))")
+        if uniform_lat(g)
+            println(io, "yfirst   = $(f(g.lat[1]))")
+            println(io, "yinc     = $(f(g.dlat))")
+        else
+            println(io, "yvals    = $(join(f.(g.lat), " "))")
+        end
     end
     return path
 end
@@ -464,9 +494,8 @@ end
 Area (m²) of each cell of the lon-lat grid `g` on the WGS84 ellipsoid.
 """
 function cell_area(g::LonLatGrid)
-    band = map(g.lat) do lat
-        lo, hi = max(lat - g.dlat / 2, -90.0), min(lat + g.dlat / 2, 90.0)
-        deg2rad(g.dlon) * (_zone_area(hi) - _zone_area(lo))
+    band = map(eachindex(g.lat)) do j
+        deg2rad(g.dlon) * (_zone_area(g.latedges[j+1]) - _zone_area(g.latedges[j]))
     end
     return repeat(permutedims(band), length(g.lon))
 end
@@ -503,7 +532,7 @@ function lat_bounds(g::ProjGrid; margin::Real=0.1)
 end
 
 lat_bounds(g::LonLatGrid; margin::Real=0.0) =
-    (max(g.lat[1] - g.dlat / 2 - margin, -90.0), min(g.lat[end] + g.dlat / 2 + margin, 90.0))
+    (max(g.latedges[1] - margin, -90.0), min(g.latedges[end] + margin, 90.0))
 
 """
     xy_bounds(g, proj; npts=16) -> ((xmin, xmax), (ymin, ymax))
