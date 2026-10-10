@@ -92,3 +92,52 @@ end
     Fs, fvs = remap(c, fine, F; nsub=40)
     @test all(fvs .== 1) && maximum(abs.(Fs .- Fe)) < 0.02
 end
+
+# All samples transformed, in the original order (reference for the skipping of
+# samples outside a projected source)
+function remap_bruteforce(tgt, src, F, nsub)
+    trans = FesmUtils._sample_transform(tgt, src)
+    dx, dy = FesmUtils.spacing(tgt)
+    off = ((1:nsub) .- (nsub + 1) / 2) ./ nsub
+    num = zeros(Float64, size(tgt))
+    cnt = zeros(Int32, size(tgt))
+    for j in eachindex(tgt.yc), i in eachindex(tgt.xc), oy in off, ox in off
+        u, v = trans((tgt.xc[i] + ox * dx, tgt.yc[j] + oy * dy))
+        is, js = FesmUtils._cell_index(src, u, v)
+        is == 0 && continue
+        isnan(F[is, js]) && continue
+        num[i, j] += F[is, js]
+        cnt[i, j] += 1
+    end
+    return map((a, n) -> n > 0 ? Float32(a / n) : NaN32, num, cnt), Float32.(cnt ./ nsub^2)
+end
+
+@testset "remap sampled small source" begin
+    ps = polar_stereographic_proj(lat_0=90, lat_ts=70, lon_0=-45, a=6378137, rf=298.257223563)
+    # UTM zone 6 (Alaska): rotated by about 90 degrees against the target
+    utm = "+proj=utm +zone=6 +datum=WGS84 +units=km +no_defs"
+    src = ProjGrid("U", (480.025, 482.975), (6800.025, 6801.975), 0.05, utm)
+    F = Float32.([sin(x * 7) + cos(y * 5) for x in src.xc, y in src.yc])
+    F[[(7919i + 104729j) % 10 < 3 for i in axes(F, 1), j in axes(F, 2)]] .= NaN32
+    (xl, yl) = xy_bounds(src, ps)
+
+    # Target cells around the source, and with the source across its edge
+    xm, ym = (xl[1] + xl[2]) / 2, (yl[1] + yl[2]) / 2
+    for (x0, y0) in ((xm - 4.3, ym - 3.7), (xm - 0.6, ym + 0.2)), nsub in (7, 40)
+        tgt = ProjGrid("T", (x0, x0 + 8), (y0, y0 + 6), 1, ps)
+        Ft, fv = remap(tgt, src, F; nsub=nsub)
+        Fb, fvb = remap_bruteforce(tgt, src, F, nsub)
+        @test any(fv .> 0) && any(fv .== 0)
+        @test isequal(Ft, Fb) && fv == fvb
+        M = [isnan(v) ? 0 : 1 for v in F]
+        fr, fvm = remap_fractions(tgt, src, M, (0, 1); nsub=nsub)
+        @test fvm == remap_bruteforce(tgt, src, ones(Float32, size(F)), nsub)[2]
+        @test all(fr[1][fvm .> 0] .≈ fvb[fvm .> 0] ./ fvm[fvm .> 0])
+    end
+
+    # Source far outside the target
+    tgt = ProjGrid("T", (xm + 500, xm + 520), (ym, ym + 20), 2, ps)
+    Ft, fv = remap(tgt, src, F; nsub=10)
+    @test all(isnan, Ft) && all(fv .== 0)
+    @test isequal((Ft, fv), remap_bruteforce(tgt, src, F, 10))
+end
