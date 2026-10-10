@@ -180,18 +180,27 @@ end
 
 """
     remap_fractions(tgt::ProjGrid, src::ProjGrid, M, classes) -> (fracs, f_valid)
+    remap_fractions(tgt::LonLatGrid, src::LonLatGrid, M, classes) -> (fracs, f_valid)
+    remap_fractions(m::AlignedMap, M, classes) -> (fracs, f_valid)
 
 Area fraction of each class of the categorical field `M` within each target cell,
-relative to its valid part. `fracs[c]` is the fraction of class `c`; `missing`
-entries of `M` are excluded. With `nsub`, the source may be on any projection and
-the fractions are estimated by supersampling.
+relative to its valid part, on the same projection or between lon-lat grids (exact
+overlaps). `fracs[c]` is the fraction of class `c`; `missing` entries of `M` are
+excluded. With `nsub`, the source may be on any projection and the fractions are
+estimated by supersampling.
 """
 function remap_fractions(tgt::ProjGrid, src::ProjGrid, M::AbstractMatrix, classes;
                          nsub::Union{Nothing,Integer}=nothing)
     nsub === nothing || return _remap_fractions_sampled(tgt, src, M, classes, nsub)
-    m = AlignedMap(tgt, src)
+    return remap_fractions(AlignedMap(tgt, src), M, classes)
+end
+
+remap_fractions(tgt::LonLatGrid, src::LonLatGrid, M::AbstractMatrix, classes) =
+    remap_fractions(AlignedMap(tgt, src), M, classes)
+
+function remap_fractions(m::AlignedMap, M::AbstractMatrix, classes)
     fracs = Dict{eltype(classes),Matrix{Float32}}()
-    fv = zeros(Float32, size(tgt))
+    fv = zeros(Float32, size(m.tgt))
     ind = Matrix{Float32}(undef, size(M))
     for c in classes
         Threads.@threads for k in axes(M, 2)

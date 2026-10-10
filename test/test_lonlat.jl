@@ -56,3 +56,32 @@
     @test all(abs.(Fl[ok] .- repeat(permutedims(LonLatGrid("G", 1).lat), 360)[ok]) .< 0.6)
     @test all(fl[:, 100:end] .== 0)
 end
+
+@testset "grid angle and vector rotation" begin
+    proj = polar_stereographic_proj(lat_0=90, lat_ts=70, lon_0=-45, a=6378137, rf=298.257223563)
+    g = ProjGrid("T", (-800, 800), (-800, 800), 100, proj)
+    α = grid_angle(g)
+    lon, _ = lonlat(g)
+    # East is counterclockwise from the x axis by lon - lon_0 (north polar stereographic)
+    @test all(abs.(mod.(α .- deg2rad.(lon .+ 45) .+ π, 2π) .- π) .< 1e-6)
+    # Rotation round trip, and a northward vector points to the pole
+    ue, vn = rand(size(g)...), rand(size(g)...)
+    ux, uy = rotate_to_grid(α, ue, vn)
+    e, n = rotate_to_geographic(α, ux, uy)
+    @test e ≈ ue && n ≈ vn
+    ux, uy = rotate_to_grid(α, zeros(size(g)), ones(size(g)))
+    xc = [x for x in g.xc, _ in g.yc]
+    yc = [y for _ in g.xc, y in g.yc]
+    r = hypot.(xc, yc)
+    @test all(((ux .* xc .+ uy .* yc) ./ r)[r .> 1] .≈ -1)
+end
+
+@testset "class fractions between lon-lat grids" begin
+    src = LonLatGrid("S", 1.0)
+    tgt = LonLatGrid("T", 2.0)
+    M = Array{Union{Missing,Int}}([lo < 0 ? 1 : 2 for lo in src.lon, _ in src.lat])
+    M[:, 1:10] .= missing
+    fr, fv = remap_fractions(tgt, src, M, (1, 2))
+    @test all(fr[1][tgt.lon .< 0, 6:end] .== 1) && all(fr[2][tgt.lon .> 0, 6:end] .== 1)
+    @test all(fv[:, 1:5] .== 0) && all(fv[:, 6:end] .== 1)
+end

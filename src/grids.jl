@@ -377,6 +377,50 @@ function lonlat(g::ProjGrid)
 end
 
 """
+    grid_angle(g) -> α
+
+Angle (radians, counterclockwise) from the x axis of the projected grid `g` to the
+local eastward direction at each cell centre (threaded). For a conformal projection
+(e.g. polar stereographic, transverse Mercator), north is at `α + π/2`. At a pole,
+east and north follow the longitude that the projection gives the pole. See
+`rotate_to_grid` and `rotate_to_geographic`.
+"""
+function grid_angle(g::ProjGrid)
+    lon, lat = lonlat(g)
+    nx, ny = size(g)
+    α = Matrix{Float64}(undef, nx, ny)
+    d = 1e-3                                    # latitude step (degrees)
+    tasks = map(_chunks(ny)) do js
+        Threads.@spawn begin
+            fwd = Proj.Transformation("EPSG:4326", g.proj; always_xy=true, ctx=Proj.proj_context_create())
+            for j in js, i in 1:nx
+                x1, y1 = fwd((lon[i, j], max(lat[i, j] - d, -90.0)))
+                x2, y2 = fwd((lon[i, j], min(lat[i, j] + d, 90.0)))
+                α[i, j] = atan(y2 - y1, x2 - x1) - π / 2
+            end
+        end
+    end
+    foreach(wait, tasks)
+    return α
+end
+
+"""
+    rotate_to_grid(α, ue, vn) -> (ux, uy)
+
+Components along the grid axes of vectors with eastward and northward components
+`ue`, `vn`, where `α` is the angle from the grid x axis to east (`grid_angle`).
+"""
+rotate_to_grid(α, ue, vn) = (ue .* cos.(α) .- vn .* sin.(α), ue .* sin.(α) .+ vn .* cos.(α))
+
+"""
+    rotate_to_geographic(α, ux, uy) -> (ue, vn)
+
+Eastward and northward components of vectors with components `ux`, `uy` along the
+grid axes, where `α` is the angle from the grid x axis to east (`grid_angle`).
+"""
+rotate_to_geographic(α, ux, uy) = (ux .* cos.(α) .+ uy .* sin.(α), .-ux .* sin.(α) .+ uy .* cos.(α))
+
+"""
     cell_area(g, lon2D, lat2D)
 
 Ellipsoidal area (m²) of each cell of `g`: projected area divided by the areal
