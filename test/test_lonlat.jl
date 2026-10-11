@@ -109,6 +109,16 @@ end
     @test sum(cell_area(src)) ≈ sum(cell_area(LonLatGrid("G", 5))) rtol=1e-9
     @test_throws ArgumentError LonLatGrid(0:1:9, [0.0, 2.0, 1.0])
 
+    # gaussian_grid: the same latitudes, cell areas proportional to the Gauss weights
+    gg = gaussian_grid(n; name="T31")
+    @test size(gg) == (96, 48) && gg.isglobal && gg.lon[1] == -180
+    @test gg.lat ≈ lat atol=1e-10
+    @test sum(cell_area(gg)) ≈ sum(cell_area(src)) rtol=1e-12
+    @test all(k -> gg.latedges[k] < gg.lat[k] < gg.latedges[k+1], 1:n)
+    t170 = gaussian_grid(256)
+    @test size(t170) == (512, 256)
+    @test t170.lat[end] ≈ 89.46282 atol=1e-4
+
     # Exact conservative remapping keeps the area-weighted global mean
     F = [sind(la) + cosd(lo) for lo in src.lon, la in src.lat]
     tgt = LonLatGrid("T", 2.0)

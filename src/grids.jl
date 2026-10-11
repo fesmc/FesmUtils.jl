@@ -110,6 +110,41 @@ function LonLatGrid(name::AbstractString, d::Real)
     return LonLatGrid(lon, lat; name=name)
 end
 
+"""
+    gaussian_grid(nlat; name="") -> LonLatGrid
+
+Global Gaussian grid with `nlat` latitudes, the roots of the Legendre polynomial of
+degree `nlat` (e.g. 256 for the spectral truncation T170), and `2nlat` longitudes from
+-180°. The cell edges in latitude bound areas proportional to the Gauss weights, so that
+the cells are those of a spectral model.
+"""
+function gaussian_grid(nlat::Integer; name::AbstractString="")
+    iseven(nlat) && nlat >= 2 || throw(ArgumentError("nlat must be even and at least 2"))
+    x = zeros(nlat)                         # roots of P_nlat, descending
+    w = zeros(nlat)                         # Gauss weights (sum 2)
+    for k in 1:nlat
+        z = cos(π * (k - 0.25) / (nlat + 0.5))
+        dp = 0.0
+        for _ in 1:100
+            p0, p1 = 1.0, z
+            for m in 2:nlat
+                p0, p1 = p1, ((2m - 1) * z * p1 - (m - 1) * p0) / m
+            end
+            dp = nlat * (z * p1 - p0) / (z^2 - 1)
+            dz = p1 / dp
+            z -= dz
+            abs(dz) < 1e-15 && break
+        end
+        x[k], w[k] = z, 2 / ((1 - z^2) * dp^2)
+    end
+    s = reverse(x)                          # ascending sines of latitude
+    edges = clamp.(-1 .+ vcat(0.0, cumsum(reverse(w))), -1.0, 1.0)
+    edges[end] = 1.0
+    nlon = 2nlat
+    lon = -180 .+ (360 / nlon) .* (0:nlon-1)
+    return LonLatGrid(lon, asind.(s); name=name, latedges=asind.(edges))
+end
+
 Base.size(g::LonLatGrid) = (length(g.lon), length(g.lat))
 
 # ---------------------------------------------------------------------------
