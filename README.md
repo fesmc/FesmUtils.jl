@@ -20,6 +20,7 @@ Utilities shared across FESM components and data processing.
 - `erode(mask, r, dx)`, `dilate(mask, r, dx)`: erosion and dilation by a distance.
 - `flood_fill(mask, seeds)`: cells of `mask` connected to the seeds.
 - `extend_labels(L, allowed, dx)`: nearest label along paths through `allowed` cells.
+- `laplace_fill(F, gaps)`, `laplace_fill!(F, gaps)`: fill the gaps of a field by harmonic (Laplace) interpolation from the valid cells around them; gaps not connected to valid cells stay NaN.
 - Region codes: a region with path `"1.3.1"` (subregion 1 of region 3 of region 1) has code `region_code("1.3.1") == 10301`, two digits per level below the first. `region_level`, `region_path`, `region_ancestor`, `in_region(codes, code)` and `region_flag_attrib` (CF flag attributes) work with fields of codes.
 
 All of these are threaded: start Julia with `-t N` (or `JULIA_NUM_THREADS`).
