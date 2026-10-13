@@ -108,4 +108,49 @@ const PS_NORTH = polar_stereographic_proj(lat_0=90, lat_ts=70, lon_0=-45, a=6378
         @test ds["crs"].attrib["proj_params"] == UTM18S
         @test maximum(abs.(ds["lat2D"][:, :] .- lat)) < 1e-4
     end
+
+    # Albers equal-area (High Mountain Asia, Shean et al. 2020)
+    HMA = albers_equal_area_proj(lat_1=25, lat_2=47, lat_0=36, lon_0=85, a=6378137, rf=298.257223563)
+    h = ProjGrid("HMA-250KM", (-1500, 1500), (-1000, 500), 250, HMA)
+    cf = Dict(cf_grid_mapping(h))
+    @test cf["grid_mapping_name"] == "albers_conical_equal_area"
+    @test cf["standard_parallel"] == [25, 47]
+    @test cf["longitude_of_central_meridian"] == 85 && cf["latitude_of_projection_origin"] == 36
+    @test cf["false_easting"] == 0 && cf["false_northing"] == 0
+
+    # Cell centres in km match the same projection in m
+    lon, lat = lonlat(h)
+    aea = FesmUtils.Proj.Transformation("+proj=aea +lat_1=25 +lat_2=47 +lat_0=36 +lon_0=85 +datum=WGS84 +units=m",
+                                        "EPSG:4326"; always_xy=true)
+    lo, la = aea((h.xc[3] * 1000, h.yc[2] * 1000))
+    @test isapprox(lon[3, 2], lo; atol=1e-9) && isapprox(lat[3, 2], la; atol=1e-9)
+
+    # Equal area: the cell areas are those of the projected cells
+    area = cell_area(h, lon, lat)
+    @test maximum(abs.(area ./ (250e3^2) .- 1)) < 1e-6
+
+    # Meridians and parallels cross at right angles: north is at α + π/2
+    α = grid_angle(h)
+    fwd = FesmUtils.Proj.Transformation("EPSG:4326", HMA; always_xy=true)
+    x1, y1 = fwd((lon[3, 2] - 1e-3, lat[3, 2]))
+    x2, y2 = fwd((lon[3, 2] + 1e-3, lat[3, 2]))
+    @test isapprox(atan(y2 - y1, x2 - x1), α[3, 2]; atol=1e-6)
+
+    # griddes: proj_params in m, and round trip
+    path = tempname() * ".txt"
+    write_griddes(path, h)
+    txt = read(path, String)
+    @test occursin("proj_params = \"+proj=aea +lat_1=25 +lat_2=47 +lat_0=36 +lon_0=85 +x_0=0 +y_0=0 " *
+                   "+a=6378137 +rf=298.257223563 +units=m\"", txt)
+    h2 = ProjGrid(path; name="HMA-250KM")
+    @test h2.xc ≈ h.xc && h2.yc ≈ h.yc && same_projection(h2, h)
+    @test cf_grid_mapping(h2) == cf_grid_mapping(h)
+
+    ncpath = tempname() * ".nc"
+    write_grid_nc(ncpath, h)
+    NCDataset(ncpath) do ds
+        @test ds["crs"].attrib["grid_mapping_name"] == "albers_conical_equal_area"
+        @test ds["crs"].attrib["standard_parallel"] == [25, 47]
+        @test maximum(abs.(ds["lat2D"][:, :] .- lat)) < 1e-4
+    end
 end

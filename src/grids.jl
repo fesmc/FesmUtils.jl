@@ -247,10 +247,23 @@ function transverse_mercator_proj(; lat_0, lon_0, k, a, rf, x_0=0, y_0=0)
 end
 
 """
+    albers_equal_area_proj(; lat_1, lat_2, lat_0, lon_0, a, rf, x_0=0, y_0=0)
+
+PROJ string (km units) for an Albers equal-area conic projection with standard
+parallels `lat_1` and `lat_2`, latitude of origin `lat_0` and central meridian `lon_0`
+(e.g. that of the High Mountain Asia glacier products, Shean et al. 2020). False
+easting and northing are in m, as in PROJ.
+"""
+function albers_equal_area_proj(; lat_1, lat_2, lat_0, lon_0, a, rf, x_0=0, y_0=0)
+    return "+proj=aea +lat_1=$lat_1 +lat_2=$lat_2 +lat_0=$lat_0 +lon_0=$lon_0 " *
+           "+x_0=$x_0 +y_0=$y_0 +a=$a +rf=$rf +units=km"
+end
+
+"""
     cf_grid_mapping(g)
 
 CF grid-mapping attributes of `g` as a vector of pairs (false easting/northing in km),
-for polar stereographic and transverse Mercator projections.
+for polar stereographic, transverse Mercator and Albers equal-area projections.
 """
 function cf_grid_mapping(g::ProjGrid)
     p = _proj_params(g.proj)
@@ -274,8 +287,15 @@ function cf_grid_mapping(g::ProjGrid)
             "latitude_of_projection_origin" => _float(get(p, "lat_0", "0")),
             "scale_factor_at_central_meridian" => _float(get(p, "k", get(p, "k_0", "1"))),
         ], common)
+    elseif p["proj"] == "aea"
+        return vcat([
+            "grid_mapping_name" => "albers_conical_equal_area",
+            "standard_parallel" => [_float(p["lat_1"]), _float(p["lat_2"])],
+            "longitude_of_central_meridian" => _float(p["lon_0"]),
+            "latitude_of_projection_origin" => _float(get(p, "lat_0", "0")),
+        ], common)
     end
-    error("only polar stereographic and transverse Mercator grids are supported, got +proj=$(p["proj"])")
+    error("only polar stereographic, transverse Mercator and Albers equal-area grids are supported, got +proj=$(p["proj"])")
 end
 
 # ---------------------------------------------------------------------------
@@ -286,8 +306,9 @@ end
     ProjGrid(griddes; name)
 
 Read a cdo grid description file (`grid_<NAME>.txt`) of a polar stereographic grid
-(CF keys) or a transverse Mercator grid (`proj_params`, a PROJ string in m, as
-written by fesm-utils). The name defaults to the `<NAME>` part of the filename.
+(CF keys), or of a transverse Mercator or Albers equal-area grid (`proj_params`, a PROJ
+string in m, as written by fesm-utils). The name defaults to the `<NAME>` part of the
+filename.
 """
 function ProjGrid(griddes::AbstractString;
                   name::AbstractString=replace(basename(griddes), r"^grid_" => "", r"\.txt$" => ""))
@@ -311,10 +332,11 @@ function ProjGrid(griddes::AbstractString;
             x_0    = _num(get(d, "false_easting", "0")) * 1000,
             y_0    = _num(get(d, "false_northing", "0")) * 1000,
         )
-    elseif occursin("+proj=tmerc", get(d, "proj_params", ""))
-        proj = _tmerc_from_params(strip(d["proj_params"], '"'))
+    elseif haskey(d, "proj_params")
+        proj = _proj_from_params(strip(d["proj_params"], '"'))
     else
-        error("$griddes: only polar_stereographic (grid_mapping_name) and transverse Mercator (proj_params) are supported")
+        error("$griddes: only polar_stereographic (grid_mapping_name), and transverse Mercator " *
+              "and Albers equal-area (proj_params) are supported")
     end
     nx, ny = parse(Int, d["xsize"]), parse(Int, d["ysize"])
     x0, dx = parse(Float64, d["xfirst"]), parse(Float64, d["xinc"])
@@ -345,10 +367,11 @@ function write_griddes(path::AbstractString, g::ProjGrid)
         println(io, "yfirst   = $(f(g.yc[1]))")
         println(io, "yinc     = $(f(dy))")
         println(io, "grid_mapping = crs")
-        if _proj_params(g.proj)["proj"] == "tmerc"
-            # cdo does not know the CF transverse_mercator mapping: the projection is
-            # given as a PROJ string in m, as fesm-utils (grid_cdo.f90) writes and reads it
-            println(io, "proj_params = \"$(_tmerc_params(g))\"")
+        if _proj_params(g.proj)["proj"] in ("tmerc", "aea")
+            # cdo does not know the CF transverse_mercator and albers_conical_equal_area
+            # mappings: the projection is given as a PROJ string in m, as fesm-utils
+            # (grid_cdo.f90) writes and reads it
+            println(io, "proj_params = \"$(_params_m(g))\"")
         else
             for (k, v) in cf_grid_mapping(g)
                 println(io, "$k = $v")
@@ -358,26 +381,34 @@ function write_griddes(path::AbstractString, g::ProjGrid)
     return path
 end
 
-# PROJ string (m) of the transverse Mercator projection of `g`, for grid descriptions
-function _tmerc_params(g::ProjGrid)
+# PROJ string (m) of the transverse Mercator or Albers equal-area projection of `g`, for
+# grid descriptions
+function _params_m(g::ProjGrid)
     p = _proj_params(g.proj)
     v(key, default) = _num(get(p, key, default))
+    ell = "+x_0=$(v("x_0", "0")) +y_0=$(v("y_0", "0")) " *
+          "+a=$(v("a", "6378137")) +rf=$(v("rf", "298.257223563")) +units=m"
+    p["proj"] == "aea" &&
+        return "+proj=aea +lat_1=$(v("lat_1", "0")) +lat_2=$(v("lat_2", "0")) " *
+               "+lat_0=$(v("lat_0", "0")) +lon_0=$(v("lon_0", "0")) " * ell
     return "+proj=tmerc +lon_0=$(v("lon_0", "0")) +lat_0=$(v("lat_0", "0")) " *
-           "+k=$(v("k", get(p, "k_0", "1"))) +x_0=$(v("x_0", "0")) +y_0=$(v("y_0", "0")) " *
-           "+a=$(v("a", "6378137")) +rf=$(v("rf", "298.257223563")) +units=m"
+           "+k=$(v("k", get(p, "k_0", "1"))) " * ell
 end
 
-# Transverse Mercator projection (km) from the PROJ string of a grid description
-# (in m, defaults as in PROJ, WGS84 ellipsoid)
-function _tmerc_from_params(str::AbstractString)
+# Transverse Mercator or Albers equal-area projection (km) from the PROJ string of a
+# grid description (in m, defaults as in PROJ, WGS84 ellipsoid)
+function _proj_from_params(str::AbstractString)
     p = _proj_params(str)
     get(p, "units", "m") == "m" || error("proj_params must use +units=m: $str")
     v(key, default) = _num(get(p, key, default))
-    return transverse_mercator_proj(
-        lat_0 = v("lat_0", "0"), lon_0 = v("lon_0", "0"), k = v("k", get(p, "k_0", "1")),
-        x_0 = v("x_0", "0"), y_0 = v("y_0", "0"),
-        a = v("a", "6378137"), rf = v("rf", "298.257223563"),
-    )
+    ell = (x_0 = v("x_0", "0"), y_0 = v("y_0", "0"), a = v("a", "6378137"), rf = v("rf", "298.257223563"))
+    get(p, "proj", "") == "tmerc" &&
+        return transverse_mercator_proj(; lat_0 = v("lat_0", "0"), lon_0 = v("lon_0", "0"),
+                                        k = v("k", get(p, "k_0", "1")), ell...)
+    get(p, "proj", "") == "aea" &&
+        return albers_equal_area_proj(; lat_1 = v("lat_1", "0"), lat_2 = v("lat_2", "0"),
+                                      lat_0 = v("lat_0", "0"), lon_0 = v("lon_0", "0"), ell...)
+    error("proj_params must be a transverse Mercator or Albers equal-area projection: $str")
 end
 
 """
@@ -445,8 +476,9 @@ end
     grid_angle(g) -> α
 
 Angle (radians, counterclockwise) from the x axis of the projected grid `g` to the
-local eastward direction at each cell centre (threaded). For a conformal projection
-(e.g. polar stereographic, transverse Mercator), north is at `α + π/2`. At a pole,
+local eastward direction at each cell centre (threaded). For a projection whose
+meridians and parallels cross at right angles (polar stereographic, transverse Mercator,
+Albers equal-area), north is at `α + π/2`. At a pole,
 east and north follow the longitude that the projection gives the pole. See
 `rotate_to_grid` and `rotate_to_geographic`.
 """
