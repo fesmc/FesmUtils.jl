@@ -104,6 +104,45 @@ function _clipped_area(px, py, xa, xb, ya, yb, ax, ay, bx, by)
     return n < 3 ? 0.0 : abs(_polygon_area(bx, by, n))
 end
 
+# Overlaps of the source cells in window rows `js` (all window columns) with the target
+# cells, as (target, source, fraction of the target cell area), from the projected
+# corners (cx, cy) of the window cells
+function _overlaps(cx::Matrix{Float64}, cy::Matrix{Float64}, js, cols, rows, nlon::Int,
+                   nx::Int, ny::Int, xe0::Float64, ye0::Float64, dx::Float64, dy::Float64)
+    nc = length(cols)
+    out = Tuple{Int,Int,Float64}[]
+    sizehint!(out, 2 * nc * length(js))
+    px, py, qx, qy = zeros(4), zeros(4), zeros(4), zeros(4)
+    ax, ay, bx, by = zeros(8), zeros(8), zeros(8), zeros(8)
+    @inbounds for jj in js, ii in 1:nc
+        px[1], py[1] = cx[ii, jj], cy[ii, jj]
+        px[2], py[2] = cx[ii+1, jj], cy[ii+1, jj]
+        px[3], py[3] = cx[ii+1, jj+1], cy[ii+1, jj+1]
+        px[4], py[4] = cx[ii, jj+1], cy[ii, jj+1]
+        all(isfinite, px) && all(isfinite, py) || continue
+        xmin, xmax = extrema(px)
+        ymin, ymax = extrema(py)
+        i0 = max(1, floor(Int, (xmin - xe0) / dx) + 1)
+        i1 = min(nx, floor(Int, (xmax - xe0) / dx) + 1)
+        j0 = max(1, floor(Int, (ymin - ye0) / dy) + 1)
+        j1 = min(ny, floor(Int, (ymax - ye0) / dy) + 1)
+        (i0 <= i1 && j0 <= j1) || continue
+        src = mod1(cols[ii], nlon) + (rows[jj] - 1) * nlon
+        for j in j0:j1, i in i0:i1
+            # In coordinates relative to the target cell (precise areas)
+            xa = xe0 + (i - 1) * dx
+            ya = ye0 + (j - 1) * dy
+            for k in 1:4
+                qx[k] = px[k] - xa
+                qy[k] = py[k] - ya
+            end
+            area = _clipped_area(qx, qy, 0.0, dx, 0.0, dy, ax, ay, bx, by)
+            area > 1e-12 * dx * dy && push!(out, (i + (j - 1) * nx, src, area / (dx * dy)))
+        end
+    end
+    return out
+end
+
 function ConservativeMap(tgt::ProjGrid, src::LonLatGrid)
     nx, ny = size(tgt)
     nlon = length(src.lon)
@@ -130,44 +169,13 @@ function ConservativeMap(tgt::ProjGrid, src::LonLatGrid)
         foreach(wait, tasks)
     end
 
-    # Overlaps of each source cell with the target cells (threaded over source rows),
-    # as (target, source, area) per chunk
+    # Overlaps of each source cell with the target cells (threaded over source rows)
     parts = map(collect(_chunks(nr))) do js
-        Threads.@spawn begin
-            out = Tuple{Int,Int,Float64}[]
-            px, py, qx, qy = zeros(4), zeros(4), zeros(4), zeros(4)
-            ax, ay, bx, by = zeros(8), zeros(8), zeros(8), zeros(8)
-            for jj in js, ii in 1:nc
-                px[1], py[1] = cx[ii, jj], cy[ii, jj]
-                px[2], py[2] = cx[ii+1, jj], cy[ii+1, jj]
-                px[3], py[3] = cx[ii+1, jj+1], cy[ii+1, jj+1]
-                px[4], py[4] = cx[ii, jj+1], cy[ii, jj+1]
-                all(isfinite, px) && all(isfinite, py) || continue
-                xmin, xmax = extrema(px)
-                ymin, ymax = extrema(py)
-                i0 = max(1, floor(Int, (xmin - xe0) / dx) + 1)
-                i1 = min(nx, floor(Int, (xmax - xe0) / dx) + 1)
-                j0 = max(1, floor(Int, (ymin - ye0) / dy) + 1)
-                j1 = min(ny, floor(Int, (ymax - ye0) / dy) + 1)
-                (i0 <= i1 && j0 <= j1) || continue
-                s = mod1(cols[ii], nlon) + (rows[jj] - 1) * nlon
-                for j in j0:j1, i in i0:i1
-                    # In coordinates relative to the target cell (precise areas)
-                    xa = xe0 + (i - 1) * dx
-                    ya = ye0 + (j - 1) * dy
-                    for k in 1:4
-                        qx[k] = px[k] - xa
-                        qy[k] = py[k] - ya
-                    end
-                    a = _clipped_area(qx, qy, 0.0, dx, 0.0, dy, ax, ay, bx, by)
-                    a > 1e-12 * dx * dy && push!(out, (i + (j - 1) * nx, s, a / (dx * dy)))
-                end
-            end
-            out
-        end
+        Threads.@spawn _overlaps(cx, cy, js, cols, rows, nlon, nx, ny, xe0, ye0, dx, dy)
     end
-    pairs = reduce(vcat, fetch.(parts); init=Tuple{Int,Int,Float64}[])
-    sort!(pairs; by=p -> (p[1], p[2]))
+    pairs = reduce(vcat, [fetch(t)::Vector{Tuple{Int,Int,Float64}} for t in parts];
+                   init=Tuple{Int,Int,Float64}[])
+    sort!(pairs)
 
     # Compressed by target cell; a source cell met twice (a global source wrapping
     # across the window) is summed
