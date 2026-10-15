@@ -43,10 +43,11 @@ end
     pt = ProjGrid("PT", (-49.5, 49.5), (-49.5, 49.5), 1, proj)
     X = [3x for x in ps.xc, y in ps.yc]
     nsub = 8
-    sd, fv = remap_sd(pt, ps, X; nsub)
+    Xm, sd, fv = remap_sd(pt, ps, X; nsub)
     @test all(sd .≈ 3 * sqrt((nsub^2 - 1) / 12) / nsub) && all(fv .== 1)
-    sd, _ = remap_sd(pt, ps, fill(5.0f0, size(ps)...); nsub=4)
-    @test all(sd .== 0) && eltype(sd) == Float32
+    @test all(Xm .≈ [3x for x in pt.xc, y in pt.yc])
+    Cm, sd, _ = remap_sd(pt, ps, fill(5.0f0, size(ps)...); nsub=4)
+    @test all(sd .== 0) && all(Cm .== 5) && eltype(sd) == Float32
 
     # Lon-lat source: a field linear in latitude, sd close to its slope times the cell
     # size over sqrt(12)
@@ -56,12 +57,12 @@ end
     d = 1 / 3600
     src = LonLatGrid(collect(-70.95 + d / 2 : d : -70.8), collect(-54.45 + d / 2 : d : -54.35))
     L = repeat(permutedims(src.lat .* 111195), length(src.lon))    # metres northward
-    sd, fv = remap_sd(tgt, src, L; nsub=16)
+    _, sd, fv = remap_sd(tgt, src, L; nsub=16)
     @test all(fv .== 1) && all(abs.(sd ./ (25 / sqrt(12)) .- 1) .< 0.01)
 
     # Outside the source, and missing values
     Lm = copy(L); Lm[:, src.lat .> -54.41] .= NaN
-    sd, fv = remap_sd(tgt, src, Lm; nsub=4)
+    _, sd, fv = remap_sd(tgt, src, Lm; nsub=4)
     _, latc = lonlat(tgt)
     @test all(fv[latc .> -54.405] .== 0) && all(isnan.(sd[latc .> -54.405])) && all(fv[latc .< -54.415] .== 1)
     @test_throws DimensionMismatch remap_sd(tgt, src, ones(3, 3); nsub=2)

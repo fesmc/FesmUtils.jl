@@ -95,15 +95,17 @@ function remap_bilinear(tgt::Union{ProjGrid,LonLatGrid}, src::Union{ProjGrid,Lon
 end
 
 """
-    remap_sd(tgt::ProjGrid, src, F; nsub) -> (sd, f_valid)
+    remap_sd(tgt::ProjGrid, src, F; nsub) -> (Fm, sd, f_valid)
 
-Standard deviation within each cell of `tgt` of the bilinear interpolation of the field
+Mean and standard deviation within each cell of `tgt` of the bilinear interpolation of the field
 `F` (size of `src`, a lon-lat grid or a projected grid on any projection), from `nsub` x
 `nsub` samples spaced uniformly in the cell. Unlike the spread of the source cells in a
 target cell, it varies smoothly from cell to cell when the target cells are smaller than
 the source cells (no aliasing): it then tends to the slope of `F` times the cell size
 over sqrt(12). Samples where the interpolation is invalid (see `remap_bilinear`) are left
-out; `f_valid` is the fraction of valid samples (NaN in `sd` where there are none).
+out; `f_valid` is the fraction of valid samples (NaN in `Fm` and `sd` where there are
+none). The mean and spread of cells covered by several sources (e.g. tiles) combine from
+`Fm`, `sd` and `f_valid`.
 Threaded over target rows.
 """
 function remap_sd(tgt::ProjGrid, src::Union{ProjGrid,LonLatGrid}, F::AbstractMatrix; nsub::Integer)
@@ -114,6 +116,7 @@ function remap_sd(tgt::ProjGrid, src::Union{ProjGrid,LonLatGrid}, F::AbstractMat
     nx, ny = size(tgt)
     dx, dy = spacing(tgt)
     off = ((1:nsub) .- (nsub + 1) / 2) ./ nsub
+    Fm = fill(T(NaN), nx, ny)
     sd = fill(T(NaN), nx, ny)
     fv = zeros(Float32, nx, ny)
     tasks = map(_chunks(ny)) do js
@@ -131,6 +134,7 @@ function remap_sd(tgt::ProjGrid, src::Union{ProjGrid,LonLatGrid}, F::AbstractMat
                     s2 += (val - ref)^2
                 end
                 if n > 0
+                    Fm[i, j] = T(ref + s1 / n)
                     sd[i, j] = T(sqrt(max(s2 / n - (s1 / n)^2, 0.0)))
                     fv[i, j] = Float32(n / nsub^2)
                 end
@@ -138,5 +142,5 @@ function remap_sd(tgt::ProjGrid, src::Union{ProjGrid,LonLatGrid}, F::AbstractMat
         end
     end
     foreach(wait, tasks)
-    return sd, fv
+    return Fm, sd, fv
 end
