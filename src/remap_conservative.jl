@@ -28,9 +28,6 @@ struct ConservativeMap
     w::Vector{Float64}      # fraction of the target cell area that it covers
 end
 
-_forward_transform(g::ProjGrid) =
-    Proj.Transformation("EPSG:4326", g.proj; always_xy=true, ctx=Proj.proj_context_create())
-
 # Columns (unwrapped: index k is longitude edge lon[1] - dlon/2 + (k-1) dlon, column
 # mod1(k, n)) and rows of the source cells that may overlap the projected grid `g`,
 # from its outline, with a margin of 2 cells

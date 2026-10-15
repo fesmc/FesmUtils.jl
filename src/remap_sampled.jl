@@ -12,10 +12,8 @@
 # Transformation from target to source coordinates, created per task (Proj
 # transformations are not thread-safe).
 _sample_transform(tgt::ProjGrid, ::LonLatGrid) = _inverse_transform(tgt)
-_sample_transform(tgt::ProjGrid, src::ProjGrid) =
-    Proj.Transformation(tgt.proj, src.proj; always_xy=true, ctx=Proj.proj_context_create())
-_sample_transform(::LonLatGrid, src::ProjGrid) =
-    Proj.Transformation("EPSG:4326", src.proj; always_xy=true, ctx=Proj.proj_context_create())
+_sample_transform(tgt::ProjGrid, src::ProjGrid) = _transform(tgt.proj, src.proj)
+_sample_transform(::LonLatGrid, src::ProjGrid) = _forward_transform(src)
 
 # Source cell containing (lon, lat), or (0, 0) if outside the source grid.
 @inline function _cell_index(src::LonLatGrid, lon::Float64, lat::Float64)
@@ -57,7 +55,7 @@ function _footprint(tgt::ProjGrid, src::ProjGrid, nsub::Integer; npts::Integer=3
     t = (0:2npts-1) ./ (2npts)
     pts = vcat([(x0 + s * (x1 - x0), y0) for s in t], [(x1, y0 + s * (y1 - y0)) for s in t],
                [(x1 - s * (x1 - x0), y1) for s in t], [(x0, y1 - s * (y1 - y0)) for s in t])
-    trans = Proj.Transformation(src.proj, tgt.proj; always_xy=true, ctx=Proj.proj_context_create())
+    trans = _transform(src.proj, tgt.proj)
     xy = map(trans, pts)
     all(p -> isfinite(p[1]) && isfinite(p[2]), xy) || return nothing
     push!(xy, xy[1])

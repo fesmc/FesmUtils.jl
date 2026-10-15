@@ -87,7 +87,7 @@ across the domain of `b` and checking that they are unchanged.
 """
 function same_projection(a::ProjGrid, b::ProjGrid)
     a.proj == b.proj && return true
-    trans = Proj.Transformation(b.proj, a.proj; always_xy=true)
+    trans = _transform(b.proj, a.proj)
     for x in (b.xc[1], b.xc[end], 0.5 * (b.xc[1] + b.xc[end])),
         y in (b.yc[1], b.yc[end], 0.5 * (b.yc[1] + b.yc[end]))
         xa, ya = trans((x, y))

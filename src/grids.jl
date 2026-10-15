@@ -444,9 +444,13 @@ end
 # Geographic coordinates and cell areas
 # ---------------------------------------------------------------------------
 
-# Per-task inverse projection (Proj transformations are not thread-safe).
-_inverse_transform(g::ProjGrid) =
-    Proj.Transformation(g.proj, "EPSG:4326"; always_xy=true, ctx=Proj.proj_context_create())
+# Transformation between coordinate systems on its own Proj context: Proj
+# transformations are not thread-safe, and any function here may run on several
+# threads at once, so each creates its own (per task in threaded loops).
+_transform(from::AbstractString, to::AbstractString) =
+    Proj.Transformation(from, to; always_xy=true, ctx=Proj.proj_context_create())
+_inverse_transform(g::ProjGrid) = _transform(g.proj, "EPSG:4326")
+_forward_transform(g::ProjGrid) = _transform("EPSG:4326", g.proj)
 
 # Split 1:n into chunks for threaded loops.
 _chunks(n::Integer) = Iterators.partition(1:n, max(1, cld(n, 4 * Threads.nthreads())))
@@ -489,7 +493,7 @@ function grid_angle(g::ProjGrid)
     d = 1e-3                                    # latitude step (degrees)
     tasks = map(_chunks(ny)) do js
         Threads.@spawn begin
-            fwd = Proj.Transformation("EPSG:4326", g.proj; always_xy=true, ctx=Proj.proj_context_create())
+            fwd = _forward_transform(g)
             for j in js, i in 1:nx
                 x1, y1 = fwd((lon[i, j], max(lat[i, j] - d, -90.0)))
                 x2, y2 = fwd((lon[i, j], min(lat[i, j] + d, 90.0)))
@@ -588,7 +592,7 @@ function lat_bounds(g::ProjGrid; margin::Real=0.1)
     latmin, latmax = extrema(lats)
 
     # A pole inside the domain is not on the boundary
-    fwd = Proj.Transformation("EPSG:4326", g.proj; always_xy=true)
+    fwd = _forward_transform(g)
     for pole in (90.0, -90.0)
         xp, yp = fwd((0.0, pole))
         if xe[1] <= xp <= xe[end] && ye[1] <= yp <= ye[end]
@@ -612,7 +616,7 @@ function xy_bounds(g::ProjGrid, proj::AbstractString; npts::Integer=16)
     dx, dy = spacing(g)
     x0, x1 = g.xc[1] - dx / 2, g.xc[end] + dx / 2
     y0, y1 = g.yc[1] - dy / 2, g.yc[end] + dy / 2
-    trans = Proj.Transformation(g.proj, proj; always_xy=true)
+    trans = _transform(g.proj, proj)
     s = range(0, 1; length=npts)
     pts = vcat([(x0 + t * (x1 - x0), y) for t in s, y in (y0, y1)][:],
                [(x, y0 + t * (y1 - y0)) for t in s, x in (x0, x1)][:])
