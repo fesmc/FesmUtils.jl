@@ -8,7 +8,7 @@ export ProjGrid, LonLatGrid, spacing, grid_name, coarsen, crop
 export polar_stereographic_proj, transverse_mercator_proj, albers_equal_area_proj, cf_grid_mapping
 export write_griddes, write_grid_nc, init_grid_nc!, grid_dims, lonlat, cell_area, lat_bounds, xy_bounds
 export grid_angle, rotate_to_grid, rotate_to_geographic, uniform_lat, gaussian_grid
-export AlignedMap, SampledMap, ConservativeMap, same_projection, remap, remap_fractions, remap_dominant, remap_bilinear
+export AlignedMap, SampledMap, ConservativeMap, same_projection, remap, remap_fractions, remap_dominant, remap_bilinear, remap_sd
 export smooth
 export distance_to, erode, dilate, flood_fill, extend_labels
 export laplace_fill, laplace_fill!

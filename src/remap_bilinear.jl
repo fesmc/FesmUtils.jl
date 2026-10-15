@@ -42,6 +42,26 @@ function _lat_position(c::AbstractVector, lat)
     return k - 1 + (lat - c[k]) / (c[k+1] - c[k])
 end
 
+# Bilinear interpolation of F (on src) at (u, v) (source coordinates), and the weight of
+# the valid source cells (missing ones left out and the others renormalised); weight 0
+# outside the source.
+@inline function _bilinear_at(src, F::AbstractMatrix, u, v)
+    bx, by = _position(src, u, v)
+    (bx === nothing || by === nothing) && return (NaN, 0.0)
+    (i0, i1, tx), (j0, j1, ty) = bx, by
+    a = 0.0
+    b = 0.0
+    @inbounds for (l, k, w) in ((i0, j0, (1 - tx) * (1 - ty)), (i1, j0, tx * (1 - ty)),
+                                (i0, j1, (1 - tx) * ty), (i1, j1, tx * ty))
+        val = F[l, k]
+        if _isvalid(val) && w > 0
+            a += w * val
+            b += w
+        end
+    end
+    return b > 0 ? (a / b, b) : (NaN, 0.0)
+end
+
 """
     remap_bilinear(tgt, src, F) -> (Ft, f_valid)
 
@@ -62,22 +82,9 @@ function remap_bilinear(tgt::Union{ProjGrid,LonLatGrid}, src::Union{ProjGrid,Lon
         Threads.@spawn begin
             trans = _sample_transform(tgt, src)
             @inbounds for j in js, i in eachindex(xs)
-                u, v = trans((xs[i], ys[j]))
-                bx, by = _position(src, u, v)
-                (bx === nothing || by === nothing) && continue
-                (i0, i1, tx), (j0, j1, ty) = bx, by
-                a = 0.0
-                b = 0.0
-                for (l, k, w) in ((i0, j0, (1 - tx) * (1 - ty)), (i1, j0, tx * (1 - ty)),
-                                  (i0, j1, (1 - tx) * ty), (i1, j1, tx * ty))
-                    val = F[l, k]
-                    if _isvalid(val) && w > 0
-                        a += w * val
-                        b += w
-                    end
-                end
+                val, b = _bilinear_at(src, F, trans((xs[i], ys[j]))...)
                 if b > 0
-                    Ft[i, j] = T(a / b)
+                    Ft[i, j] = T(val)
                     fv[i, j] = Float32(b)
                 end
             end
@@ -85,4 +92,51 @@ function remap_bilinear(tgt::Union{ProjGrid,LonLatGrid}, src::Union{ProjGrid,Lon
     end
     foreach(wait, tasks)
     return Ft, fv
+end
+
+"""
+    remap_sd(tgt::ProjGrid, src, F; nsub) -> (sd, f_valid)
+
+Standard deviation within each cell of `tgt` of the bilinear interpolation of the field
+`F` (size of `src`, a lon-lat grid or a projected grid on any projection), from `nsub` x
+`nsub` samples spaced uniformly in the cell. Unlike the spread of the source cells in a
+target cell, it varies smoothly from cell to cell when the target cells are smaller than
+the source cells (no aliasing): it then tends to the slope of `F` times the cell size
+over sqrt(12). Samples where the interpolation is invalid (see `remap_bilinear`) are left
+out; `f_valid` is the fraction of valid samples (NaN in `sd` where there are none).
+Threaded over target rows.
+"""
+function remap_sd(tgt::ProjGrid, src::Union{ProjGrid,LonLatGrid}, F::AbstractMatrix; nsub::Integer)
+    size(F) == size(src) ||
+        throw(DimensionMismatch("field size $(size(F)) does not match source grid $(size(src))"))
+    nsub >= 1 || throw(ArgumentError("nsub must be >= 1"))
+    T = _outtype(F)
+    nx, ny = size(tgt)
+    dx, dy = spacing(tgt)
+    off = ((1:nsub) .- (nsub + 1) / 2) ./ nsub
+    sd = fill(T(NaN), nx, ny)
+    fv = zeros(Float32, nx, ny)
+    tasks = map(_chunks(ny)) do js
+        Threads.@spawn begin
+            trans = _sample_transform(tgt, src)
+            @inbounds for j in js, i in 1:nx
+                # Sums about the first valid sample (no cancellation)
+                n, ref, s1, s2 = 0, 0.0, 0.0, 0.0
+                for oy in off, ox in off
+                    val, b = _bilinear_at(src, F, trans((tgt.xc[i] + ox * dx, tgt.yc[j] + oy * dy))...)
+                    b > 0 || continue
+                    n == 0 && (ref = val)
+                    n += 1
+                    s1 += val - ref
+                    s2 += (val - ref)^2
+                end
+                if n > 0
+                    sd[i, j] = T(sqrt(max(s2 / n - (s1 / n)^2, 0.0)))
+                    fv[i, j] = Float32(n / nsub^2)
+                end
+            end
+        end
+    end
+    foreach(wait, tasks)
+    return sd, fv
 end
