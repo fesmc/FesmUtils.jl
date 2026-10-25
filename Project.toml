@@ -4,11 +4,13 @@ version = "0.1.0"
 authors = ["Alexander Robinson"]
 
 [deps]
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 Proj = "c94c279d-25a6-4763-9509-64d165bea63e"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [compat]
+JSON = "0.21, 1"
 NCDatasets = "0.14"
 Proj = "1.9"
 SparseArrays = "1"

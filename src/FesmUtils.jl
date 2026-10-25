@@ -26,5 +26,6 @@ include("morphology.jl")
 include("fill.jl")
 include("rasterize.jl")
 include("region_codes.jl")
+include("namelist.jl")
 
 end # module

@@ -25,6 +25,27 @@ Utilities shared across FESM components and data processing.
 
 All of these are threaded: start Julia with `-t N` (or `JULIA_NUM_THREADS`).
 
+## Namelist files (`FesmUtils.Namelist`)
+
+Par files as fesm-utils `nml.f90` reads them (phase 0 rule: vector elements split at blanks outside quotes, so `units = "kg m-2 yr-1" "mm d-1"` is two strings; a comment after `&group` is allowed), with every comment kept:
+
+```julia
+using FesmUtils.Namelist
+groups = read_namelist("yelmox/yelmox_Greenland.nml")    # Vector{Group}, Group.keys::Vector{Key}
+parse_value(groups[1].keys[1].raw)                       # String, Bool, Int, Float64 or a Vector
+write_namelist("copy.nml", groups)                       # read_namelist("copy.nml") == groups
+```
+
+`resolve` gives the configuration a run sees: the base par file, the groups it names (`GroupRef` rules; `FORCING_REFS` for coefficients, terms and snapshots) from the base or the library files, each group filled from its defaults group, and runme `-p` overrides, with the source of every value (`base`, `library`, `default`, `override`):
+
+```julia
+cfg = load_config(yelmox_root)                           # .runme/info.json: par_defaults, par_library
+groups, order = resolve(cfg, "yelmox/yelmox_Greenland.nml", parse_overrides(["ctrl.dtt=5", "forcing.coefs==alpha,dTo"]))
+value_of(groups["coef_alpha"], "method"), groups["coef_alpha"].entries["method"].source
+```
+
+`Config(root; schema, library)` sets the defaults groups (`name or Regex => (file, group)`) and the library explicitly. The module docstring has the parsing rules and what is not supported (flat `group.key = value` lines).
+
 ## Planned
 
 ## FesmPreprocessing.jl
